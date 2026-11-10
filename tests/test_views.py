@@ -237,9 +237,9 @@ def test_yes_no_column_filter_uses_yes_no(client):
     url = reverse("my_insights:dataset", args=[dataset_id])
     response = client.get(url, {"view": "rows", "c1": "True"})  # ticked "Yes"
     cells = response.content.decode()
-    assert "truncate\">a</td>" in cells
-    assert "truncate\">b</td>" not in cells
-    assert "truncate\">Yes</td>" in cells
+    assert 'truncate">a</td>' in cells
+    assert 'truncate">b</td>' not in cells
+    assert 'truncate">Yes</td>' in cells
 
 
 def test_idle_warning_only_when_there_is_data(client):

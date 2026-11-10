@@ -1,93 +1,65 @@
-# Plan — Phase 1: Foundation + Upload & Profile
+# Plan — Phase 2: Relate datasets (links / joins)
 
-**Status: done (10-11-2026).** 57 tests pass. Notes at the bottom.
+**Status: done (10-11-2026).** 89 tests pass (32 new). Notes at the bottom.
 
 ## Goal (in one line)
-A user opens My Insights, uploads 1+ CSV/Excel files, and sees a clean profile of each file.
-Nothing is saved to disk or database.
+Link two datasets by shared column(s) to make a new combined dataset, with no extra memory.
 
-Example: upload `stock_jan.csv` → page shows "Item Code — text — 0 blanks — e.g. A101, A102".
+Example: `Sales` (Item Code, Qty) + `Items` (Code, Name, Price) → new dataset
+"Sales + Items" (Item Code, Qty, Name, Price). It shows up like any other dataset.
 
 ## Decisions (agreed)
 | # | Decision |
 |---|----------|
-| 1 | Build here, not in live Stock Audit. Stock Audit installs it from git in a later phase. |
-| 2 | No login in the add-on. Each browser is told apart by its session cookie. |
-| 3 | One waitress process, many threads (like Stock Audit). Fine for 10–15 users. |
-| 4 | Tailwind: standalone `tailwindcss.exe` + `build_css.ps1`, same as Stock Audit. DaisyUI 5. |
-| 5 | Files: CSV, XLSX, XLSM. `.xls` → "Please save as .xlsx". |
-| 6 | Excel: every non-empty sheet becomes its own dataset. |
-| 7 | Unclear dates read as dd-mm-yyyy (03-04-2026 = 3 April). |
-| 8 | Header = first non-blank row. |
-| 9 | One odd value in a column → whole column is text, flagged, tooltip shows examples + row. |
-| 10 | Idle 25 min → warning with **Keep my data**; idle 30 min → wiped. **Clear my data** button always visible. Host logout also wipes (logout signal). |
-| 11 | One folder + one git repo per reusable app inside `Apps/`. |
-| 12 | `Apps/CLAUDE.md` = shared rules; each app's `CLAUDE.md` = its "Current phase". |
-| 13 | 1 GB server: demo/Stock Audit override limits (below). Add-on defaults stay as in project.md. |
-| 14 | DuckDB never writes temp files. Too big → clear message, not a crash. |
-| 15 | Excel read with `python-calamine` (low memory, values only, macros ignored). |
-
-## Folder layout
-```
-Apps/
-  CLAUDE.md                 shared rules for all reusable apps
-  my-insights/              own git repo, installable from git
-    pyproject.toml
-    CLAUDE.md               "Current phase" only
-    my_insights/            the add-on (shipped)
-    demo/                   tiny test site (not shipped)
-    tests/
-    tools/                  tailwindcss.exe (not in git), build_css.ps1
-    docs/project.md, docs/plan.md
-```
-
-## Settings block
-```python
-MY_INSIGHTS = {  # add-on defaults      # demo / 1 GB server
-    "MAX_FILE_MB": 100,  #                        20
-    "MAX_ROWS": 2_000_000,  #                        500_000
-    "MAX_COLUMNS": 300,
-    "PREVIEW_ROW_CAP": 100_000,
-    "SESSION_MEMORY_MB": 1024,  #                        150
-    "TOTAL_MEMORY_MB": None,  # None = no cap          350
-    "IDLE_WARN_MINUTES": 25,
-    "IDLE_CLEAR_MINUTES": 30,
-}
-```
+| 1 | A link makes a **new combined dataset**, saved as a DuckDB **view** (a stored recipe, no copy of data). |
+| 2 | Join types, plain names + tooltips: **Keep all main rows** (left, default), **Only matches** (inner), **Keep everything** (full). No right join. |
+| 3 | Link on any number of column pairs (**+ Add column**). e.g. Item Code + Store. |
+| 4 | Ignore upper/lower case by default (tick-box to turn off). If the two column types differ, compare as text. |
+| 5 | Suggestions: similar name + compatible type + real shared values; show "940 of 1,000 rows match (94%)"; only ≥ 30% match, best first. |
+| 6 | Main dataset = many rows (Sales). **Lookup list** = parent (Items). Lookup link column(s) **must be unique** (as a combination) — else refused, naming examples + rows. So totals never double. |
+| 7 | Same column name on both sides → `Name` and `Name (Items)`. Link column appears once. |
+| 8 | Preview before **Create**: match %, row count, warnings, first 100 rows. Result over MAX_ROWS → refused. |
+| 9 | Combined datasets can be linked again (chains: Sales + Items + Stores). |
+| 10 | Removing a source also removes datasets built on it — confirm lists them first. |
+| 11 | **Edit link** on a combined dataset reopens the screen with its settings. |
+| 12 | Home: **Link datasets** button (2+ datasets) + hint cards ("Sales and Items share Item Code, 94% → Link"). |
+| 13 | Blank link values never match; preview counts them ("15 sales have no Item Code"). |
+| 14 | One combined dataset holds **many lookups**, each linked to the main dataset (star) or to an earlier lookup (hierarchy: Item → Sub-category → Category). |
 
 ## What we build
-1. **Skeleton** — `uv` project, Django 5.2, Python 3.12, settings `base/development/test/production`,
-   waitress `serve` command, HTMX + Alpine + DaisyUI, `django-datatable` from git.
-2. **Engine** — one in-memory DuckDB per session (dict keyed by session id, thread-safe lock).
-   Per-session memory limit, total budget check ("Server is busy"), no temp directory.
-   Cleanup: idle sweep, Clear button, logout signal.
-3. **Upload screen** — drag-and-drop, multiple files. Read from memory only.
-   Detect types (number / text / date / true-false) and dates. Trim spaces, skip blank rows.
-   Reject with a named reason: corrupt, too big, too many rows/columns, empty/duplicate column name, `.xls`.
-4. **Profile screen** — one card per dataset (name, rows, columns, memory used).
-   Column table via `django-datatable` `RowsTable`: name, type, blanks, samples, flag.
-   First 100 rows preview. Rename / remove dataset. Tooltips on every badge and flag.
-5. **Idle warning** — Alpine timer banner at 25 min with Keep my data.
+1. **Engine (`linking.py`)** — `LinkSpec` (main id, lookup id, column pairs, join type, ignore case).
+   - `check_link(spec)` → match stats, unique check, blanks, result row count, problems.
+   - `create_link(spec, name)` → `CREATE VIEW` + profile (types copied from sources, blanks/samples recomputed).
+   - `suggest_links(workspace)` → ranked suggestions per dataset pair.
+   - Dataset gets `link` (its spec) and `depends_on` ids; remove cascades.
+2. **Link screen** — pick main + lookup, column pairs (+ Add column), join type, ignore-case tick-box.
+   HTMX live preview: stats, warnings, first 100 rows (`django-datatable`). Name box + **Create**.
+3. **Home** — Link datasets button, suggestion hints, "combined" badge on cards.
+4. **Dataset page** — "Built from Sales + Items" line, **Edit link**, remove confirm lists dependants.
 
 ## Tests
-- Good CSV / XLSX / XLSM → right types and counts; multi-sheet → one dataset per sheet.
-- Each reject rule → right message (names the column).
-- dd-mm date rule; mixed column → text + flag.
-- Two sessions can't see each other's data.
-- Clear button, idle timeout and logout signal all wipe data.
-- Over-limit → friendly message; no files written to disk during upload.
+- Left / inner / full give right row counts and blanks.
+- Multi-column link; ignore-case on/off; number vs text compared as text.
+- Duplicate lookup key → refused, names value + rows. Over MAX_ROWS → refused.
+- Name clash → `Name (Items)`. Chain of 3. Edit link. Remove source cascades.
+- Suggestions find `Item Code` ↔ `item_code`; skip pairs under 30%.
+- View adds ~no memory. Two sessions stay isolated.
 
 ## Not in this phase
-Joins, query builder, charts, dashboards, export, AI assistant, recipes, Indian number formatting.
+Query builder, charts, dashboards, export, AI, recipes (the link spec is kept so recipes can save it later).
+
+## Notes carried from Phase 1
+- DuckDB "block disk access" is off (it blocks reading from memory). Phase 3 must build SQL itself,
+  never run user/AI-written SQL as-is.
+- CSV row numbers in tooltips skip blank lines; Excel rows are exact.
 
 ## Notes from building (what changed vs. the plan)
-- Added `fsspec`: DuckDB needs it to read a file straight from memory (no disk).
-- `TOTAL_MEMORY_MB = None` now means "half the server's RAM, counting only My Insights' data".
-  Measuring the whole machine's RAM refused uploads whenever *other* programs used memory.
-- One memory number per user is stored after each load/remove, so pages never wait for
-  another user's upload to finish.
-- A column mixing dates with and without a time (e.g. `03-04-2026` and `03-04-2026 10:30`)
-  is one "Date & time" column, not a mixed one.
-- CSV row numbers in "odd value" tooltips skip blank lines (DuckDB drops them). Excel rows are exact.
-- DuckDB's "block all disk access" switch also blocks reading from memory, so it is off.
-  Phase 3 (query builder) must build SQL itself and never run user/AI-written SQL as-is.
+- Duplicate message names the value and how often it repeats ("A101 (2 times)"), not file row
+  numbers: the typed table does not keep file row numbers. Search for the value in the Rows tab.
+- Match % = rows **with a link value** that match (blanks counted separately), same as the hints.
+- "Keep everything": the link column shows the lookup's value for unmatched lookup rows.
+- Suggestions only look at text and whole-number columns, need unique values on the lookup side,
+  and a one-to-one pair keeps the bigger dataset as main. Cached until the dataset list changes.
+- Editing a link rebuilds every dataset built on it inside one DuckDB transaction; if one would
+  break, nothing changes and the message names it.
+- Each open link screen (browser tab) keeps its own preview (`draft` id, last 5 kept).

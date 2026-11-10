@@ -263,7 +263,7 @@ def _clean(column: str) -> str:
     return f"nullif(trim({column}, '{TRIM_CHARS}'), '')"
 
 
-def _quote(identifier: str) -> str:
+def quote_name(identifier: str) -> str:
     return '"' + identifier.replace('"', '""') + '"'
 
 
@@ -319,7 +319,7 @@ def _build_dataset(
             connection, column_name, cleaned[position], stats[position], row_count, data_rows
         )
         profiles.append(profile)
-        select_parts.append(f"{cast_sql} AS {_quote(column_name)}")
+        select_parts.append(f"{cast_sql} AS {quote_name(column_name)}")
 
     dataset_id = workspace.new_dataset_id()
     table_name = f"ds_{dataset_id}"
@@ -329,7 +329,7 @@ def _build_dataset(
     )
     try:
         connection.execute(f"DROP TABLE {RAW_TABLE}")
-        _fill_samples(connection, table_name, profiles)
+        fill_samples(connection, table_name, profiles)
     except BaseException:
         connection.execute(f"DROP TABLE IF EXISTS {table_name}")  # don't leave it in memory
         raise
@@ -533,7 +533,7 @@ def _misfit_examples(connection, value, kind, date_format, data_rows) -> list[st
     return [f"“{text}” (row {row_no})" for text, row_no in rows]
 
 
-def _fill_samples(connection, table_name: str, profiles: list[ColumnProfile]) -> None:
+def fill_samples(connection, table_name: str, profiles: list[ColumnProfile]) -> None:
     """Up to 3 different example values per column, from the first rows."""
     rows = connection.execute(f"SELECT * FROM {table_name} LIMIT {SAMPLE_ROWS}").fetchall()
     for position, profile in enumerate(profiles):

@@ -1,0 +1,13 @@
+{% for group in groups %}
+<div role="alert" class="alert alert-soft alert-info items-start">
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5 shrink-0"><path stroke-linecap="round" stroke-linejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244"/></svg>
+  <div class="min-w-0">
+    <p><b>{{ group.main.name }}</b> can pick up details from
+      {% for item in group.items %}<b>{{ item.lookup.name }}</b>{% if item.via %} via {{ item.via.name }}{% endif %}
+      <span class="text-base-content/70" title="{{ item.suggestion.matched }} of {{ item.suggestion.total }} filled values match">({{ item.suggestion.main_column }} = {{ item.suggestion.lookup_column }}, {{ item.suggestion.match_percent }}% match)</span>{% if not forloop.last %}, {% endif %}{% endfor %}.
+    </p>
+  </div>
+  <a href="{% url 'my_insights:link' %}?main={{ group.main.dataset_id }}" class="btn btn-sm btn-primary"
+     title="Open the link screen with these lookups filled in. You can check and change everything before saving.">Link</a>
+</div>
+{% endfor %}

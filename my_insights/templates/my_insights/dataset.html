@@ -11,9 +11,11 @@
     </ul>
   </div>
 
-  {% with heading=dataset.name subheading="From "|add:dataset.source_file %}
-    {% include "my_insights/partials/top_bar.html" %}
-  {% endwith %}
+  {% if dataset.link %}
+    {% with heading=dataset.name subheading="Built from "|add:dataset.source_file %}{% include "my_insights/partials/top_bar.html" %}{% endwith %}
+  {% else %}
+    {% with heading=dataset.name subheading="From "|add:dataset.source_file %}{% include "my_insights/partials/top_bar.html" %}{% endwith %}
+  {% endif %}
 
   <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
     <div class="stats stats-horizontal border border-base-300 bg-base-100">
@@ -44,8 +46,12 @@
         {% if rename_error %}<p class="text-sm text-error">{{ rename_error }}</p>{% endif %}
       </form>
       <button x-show="!renaming" type="button" class="btn btn-sm" @click="renaming = true" title="Give this dataset a clearer name">Rename</button>
+      {% if dataset.link %}
+      <a x-show="!renaming" href="{% url 'my_insights:link' %}?edit={{ dataset.dataset_id }}" class="btn btn-sm"
+         title="Change the lookup lists, link columns or rows to keep">Edit link</a>
+      {% endif %}
       <form x-show="!renaming" method="post" action="{% url 'my_insights:dataset_remove' dataset.dataset_id %}"
-            onsubmit="return confirm('Remove this dataset from memory?')">
+            onsubmit="return confirm('{{ remove_confirm|escapejs }}')">
         {% csrf_token %}
         <button class="btn btn-sm btn-ghost text-error" title="Remove this dataset from memory">Remove</button>
       </form>

@@ -241,7 +241,7 @@ def test_failed_load_leaves_no_table_behind(workspace, monkeypatch):
     def out_of_memory(*args):
         raise duckdb.OutOfMemoryException("simulated")
 
-    monkeypatch.setattr(loading, "_fill_samples", out_of_memory)
+    monkeypatch.setattr(loading, "fill_samples", out_of_memory)
     with pytest.raises(UploadRejected, match="too large"):
         load_file(workspace, "a.csv", csv_bytes("A", "1"))
     assert workspace.connection.execute("SELECT count(*) FROM duckdb_tables()").fetchone() == (0,)

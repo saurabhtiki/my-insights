@@ -1,0 +1,20 @@
+{% extends base_template %}
+{% block title %}{% if edit_id %}Edit link{% else %}Link datasets{% endif %}{% endblock %}
+{% block content %}
+{% include "my_insights/partials/idle_script.html" %}
+<div class="space-y-6" hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
+  <div class="breadcrumbs text-sm">
+    <ul>
+      <li><a href="{% url 'my_insights:home' %}" title="Back to all your uploaded data">Your data</a></li>
+      <li>{% if edit_id %}Edit link{% else %}Link datasets{% endif %}</li>
+    </ul>
+  </div>
+
+  {% with heading="Link datasets" subheading="Add details from lookup lists to a main dataset, e.g. item names and prices to every sale. Nothing is copied, so this uses almost no memory." %}
+    {% include "my_insights/partials/top_bar.html" %}
+  {% endwith %}
+
+  {% include "my_insights/partials/link_form.html" %}
+  {% include "my_insights/partials/idle_watch.html" %}
+</div>
+{% endblock %}

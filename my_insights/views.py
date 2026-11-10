@@ -19,6 +19,7 @@ from django_datatable import (
 )
 
 from . import conf
+from .linking import describe_sources
 from .loading import UploadRejected, load_file
 from .uploads import MemoryOnlyUploadHandler
 from .workspace import (
@@ -52,12 +53,23 @@ KIND_HELP = {
 TABLE_KINDS = {"integer": NUMBER, "number": NUMBER, "date": DATE}
 
 
-def _page_context(request, workspace, expired: bool, **extra) -> dict:
+def remove_confirm(workspace, dataset) -> str:
+    """The question asked before removing, naming the combined datasets that go with it."""
+    text = f"Remove “{dataset.name}” from memory?"
+    dependants = workspace.dependants(dataset.dataset_id)
+    if dependants:
+        names = ", ".join(f"“{d.name}”" for d in dependants)
+        text += f" This also removes {names}, built from it."
+    return text
+
+
+def page_context(request, workspace, expired: bool, **extra) -> dict:
     datasets = list(workspace.datasets.values()) if workspace else []
     used_mb = workspace.memory_used_bytes / MB if workspace else 0
     return {
         "base_template": conf.get("BASE_TEMPLATE"),
         "datasets": datasets,
+        "can_link": len(datasets) >= 2,
         "expired": expired,
         "memory": memory_status(),
         "my_memory_mb": round(used_mb, 1),
@@ -71,9 +83,21 @@ def _page_context(request, workspace, expired: bool, **extra) -> dict:
     }
 
 
+def _cards(workspace) -> list[dict]:
+    """The dataset cards on the home page, each with its remove question."""
+    if workspace is None:
+        return []
+    return [
+        {"dataset": dataset, "remove_confirm": remove_confirm(workspace, dataset)}
+        for dataset in workspace.datasets.values()
+    ]
+
+
 def _panel_response(request, workspace, results=(), expired=False):
     """The dataset list (+ upload results): only the panel for htmx, else the whole page."""
-    context = _page_context(request, workspace, expired, results=list(results))
+    context = page_context(
+        request, workspace, expired, results=list(results), cards=_cards(workspace)
+    )
     if request.headers.get("HX-Request") == "true":
         return render(request, "my_insights/partials/workspace_panel.html", context)
     return render(request, "my_insights/home.html", context)
@@ -83,7 +107,8 @@ def _panel_response(request, workspace, results=(), expired=False):
 def home(request):
     workspace, expired = current_workspace(request)
     expired = expired or request.GET.get("cleared") == "1"  # sent here from a dataset page
-    return render(request, "my_insights/home.html", _page_context(request, workspace, expired))
+    context = page_context(request, workspace, expired, cards=_cards(workspace))
+    return render(request, "my_insights/home.html", context)
 
 
 @csrf_exempt  # CSRF is checked in _receive_upload, after the memory-only handler is set
@@ -165,7 +190,7 @@ def keep_alive(request):
     return HttpResponse(status=410 if expired or workspace is None else 204)
 
 
-def _home_after_expiry():
+def home_after_expiry():
     """Back to the start page, which then explains that idle data was cleared."""
     return redirect(reverse("my_insights:home") + "?cleared=1")
 
@@ -184,7 +209,7 @@ def _dataset_or_404(request, dataset_id):
 def dataset_detail(request, dataset_id: int):
     workspace, dataset = _dataset_or_404(request, dataset_id)
     if dataset is None:
-        return _home_after_expiry()
+        return home_after_expiry()
     return _dataset_page(request, workspace, dataset)
 
 
@@ -195,7 +220,7 @@ def _dataset_page(request, workspace, dataset, rename_error: str = "", status: i
         if view == "rows"
         else _profile_table(request, dataset)
     )
-    context = _page_context(
+    context = page_context(
         request,
         workspace,
         False,
@@ -204,6 +229,7 @@ def _dataset_page(request, workspace, dataset, rename_error: str = "", status: i
         view=view,
         rename_error=rename_error,
         preview_rows=PREVIEW_ROWS,
+        remove_confirm=remove_confirm(workspace, dataset),
     )
     response = table_response(
         request,
@@ -256,27 +282,34 @@ def _profile_table(request, dataset) -> RowsTable:
 
 
 def _rows_table(request, workspace, dataset) -> RowsTable:
-    """The first rows of the dataset. Columns use keys c0, c1… so a column called "page" or
-    "sort" can't clash with the table's own URL settings."""
     with workspace.lock:
         records = workspace.connection.execute(
             f'SELECT * FROM "{dataset.table_name}" LIMIT {PREVIEW_ROWS}'
         ).fetchall()
-    keys = [f"c{index}" for index in range(len(dataset.columns))]
+    return rows_table(request, records, dataset.columns, "insights-rows", request.path)
+
+
+def rows_table(
+    request, records, profiles, table_id: str, base_url: str, push_url=True
+) -> RowsTable:
+    """A table of data rows. Columns use keys c0, c1… so a column called "page" or "sort"
+    can't clash with the table's own URL settings."""
+    keys = [f"c{index}" for index in range(len(profiles))]
     rows = [dict(zip(keys, record, strict=True)) for record in records]
     columns = [
         # Yes / No columns get a tick-list showing Yes / No, the same words as the cells.
         Column(key, column.name, type=CHOICE, choices=YES_NO)
         if column.kind == "boolean"
         else Column(key, column.name, type=TABLE_KINDS.get(column.kind, TEXT))
-        for key, column in zip(keys, dataset.columns, strict=True)
+        for key, column in zip(keys, profiles, strict=True)
     ]
     return RowsTable(
         request.GET,
         rows,
         columns,
-        table_id="insights-rows",
-        base_url=request.path,
+        table_id=table_id,
+        base_url=base_url,
+        push_url=push_url,
         search_fields=tuple(keys),
         search_placeholder="Search these rows",
         keep=("view",),
@@ -287,32 +320,45 @@ def _rows_table(request, workspace, dataset) -> RowsTable:
     )
 
 
+def name_error(workspace, new_name: str, ignore_id: int | None = None) -> str:
+    """Why a dataset name can't be used, or "" when it is fine."""
+    if not new_name:
+        return "Type a name for the dataset."
+    if len(new_name) > 100:
+        return "Keep the name under 100 characters."
+    if workspace.unique_name(new_name, ignore_id=ignore_id) != new_name:
+        return f"Another dataset is already called “{new_name}”."
+    return ""
+
+
 @require_POST
 def dataset_rename(request, dataset_id: int):
     workspace, dataset = _dataset_or_404(request, dataset_id)
     if dataset is None:
-        return _home_after_expiry()
+        return home_after_expiry()
     new_name = " ".join(request.POST.get("name", "").split())
-    error = ""
-    if not new_name:
-        error = "Type a name for the dataset."
-    elif len(new_name) > 100:
-        error = "Keep the name under 100 characters."
-    elif workspace.unique_name(new_name, ignore_id=dataset_id) != new_name:
-        error = f"Another dataset is already called “{new_name}”."
+    error = name_error(workspace, new_name, ignore_id=dataset_id)
     if error:
         logger.info("Rename refused for dataset %s: %s", dataset_id, error)
         return _dataset_page(request, workspace, dataset, rename_error=error, status=400)
-    dataset.name = new_name
+    with workspace.lock:
+        dataset.name = new_name
+        for other in workspace.datasets.values():  # "Built from …" lines show the new name
+            if other.link and dataset_id in other.link.source_ids():
+                other.source_file = describe_sources(other.link, workspace.datasets)
     return redirect("my_insights:dataset", dataset_id=dataset_id)
 
 
 @require_POST
 def dataset_remove(request, dataset_id: int):
     workspace, dataset = _dataset_or_404(request, dataset_id)
+    results = []
     if dataset is not None:
         with workspace.lock:
-            workspace.remove_dataset(dataset_id)
+            removed = workspace.remove_dataset(dataset_id)
+        if len(removed) > 1:
+            names = ", ".join(f"“{name}”" for name in removed)
+            results.append({"ok": True, "title": "Removed", "message": names})
     if request.headers.get("HX-Request") == "true":
-        return _panel_response(request, workspace)
+        return _panel_response(request, workspace, results)
     return redirect("my_insights:home")

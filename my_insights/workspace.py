@@ -39,13 +39,37 @@ class ColumnProfile:
 
 
 @dataclass
+class LinkStep:
+    """One lookup list joined in. `linked_to` is 0 for the main dataset, or k for the k-th
+    lookup (1-based), so a lookup can hang off an earlier one (Item → Sub-category)."""
+
+    lookup_id: int
+    linked_to: int = 0
+    pairs: list[tuple[str, str]] = field(default_factory=list)  # (linked-to column, lookup column)
+    join_type: str = "left"  # left | inner | full
+
+
+@dataclass
+class LinkSpec:
+    """How a combined dataset is built: a main dataset plus lookup lists. Holds no data."""
+
+    main_id: int
+    steps: list[LinkStep] = field(default_factory=list)
+    ignore_case: bool = True
+
+    def source_ids(self) -> list[int]:
+        return [self.main_id, *(step.lookup_id for step in self.steps)]
+
+
+@dataclass
 class Dataset:
     dataset_id: int
     name: str
-    table_name: str
-    source_file: str
+    table_name: str  # a table for an uploaded file, a view for a combined dataset
+    source_file: str  # file name, or "Sales, Items" for a combined dataset
     row_count: int
     columns: list[ColumnProfile]
+    link: LinkSpec | None = None  # set for a combined dataset
 
     @property
     def flagged_count(self) -> int:
@@ -67,6 +91,10 @@ class Workspace:
         self.last_seen = time.monotonic()
         # Updated after each load / remove, so other users can read it without waiting.
         self.memory_used_bytes = 0
+        # The link screens' latest checks, for their preview tables: {draft id: LinkCheck}.
+        # One per open link screen, so two browser tabs don't mix up their previews.
+        self.link_drafts: dict = {}
+        self.suggestion_cache: tuple = ((), [])  # (dataset ids it was made for, suggestions)
 
     def new_dataset_id(self) -> int:
         dataset_id = self._next_id
@@ -85,10 +113,43 @@ class Workspace:
             number += 1
         return name
 
-    def remove_dataset(self, dataset_id: int) -> None:
-        dataset = self.datasets.pop(dataset_id)
-        self.connection.execute(f'DROP TABLE IF EXISTS "{dataset.table_name}"')
+    def dependants(self, dataset_id: int) -> list[Dataset]:
+        """Combined datasets built (directly or through others) on this one, each listed
+        after the datasets it is built from."""
+        found: dict[int, Dataset] = {}
+        changed = True
+        while changed:
+            changed = False
+            for dataset in self.datasets.values():
+                if dataset.link is None or dataset.dataset_id in found:
+                    continue
+                sources = set(dataset.link.source_ids())
+                if dataset_id in sources or sources & found.keys():
+                    found[dataset.dataset_id] = dataset
+                    changed = True
+        ordered: dict[int, Dataset] = {}
+        while len(ordered) < len(found):
+            ready = [
+                dataset
+                for key, dataset in found.items()
+                if key not in ordered
+                and set(dataset.link.source_ids()) & found.keys() <= ordered.keys()
+            ]
+            if not ready:  # a loop; never expected, as the link screen refuses it
+                logger.error("Combined datasets depend on each other: %s", list(found))
+                ready = [dataset for key, dataset in found.items() if key not in ordered]
+            ordered.update((dataset.dataset_id, dataset) for dataset in ready)
+        return list(ordered.values())
+
+    def remove_dataset(self, dataset_id: int) -> list[str]:
+        """Remove a dataset and every combined dataset built on it. Returns the names removed."""
+        removed = [*reversed(self.dependants(dataset_id)), self.datasets[dataset_id]]
+        for dataset in removed:
+            kind = "VIEW" if dataset.link else "TABLE"
+            self.connection.execute(f'DROP {kind} IF EXISTS "{dataset.table_name}"')
+            del self.datasets[dataset.dataset_id]
         self.refresh_memory()
+        return [dataset.name for dataset in removed]
 
     def refresh_memory(self) -> None:
         """Re-measure this database's memory. Call while holding `lock`."""

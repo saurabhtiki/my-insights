@@ -1,0 +1,162 @@
+{% load humanize %}
+<div id="link-screen" class="space-y-4">
+<form id="link-form" method="post" action="{% url 'my_insights:link' %}" class="space-y-4"
+      hx-post="{% url 'my_insights:link' %}" hx-trigger="change[target.name != 'name'], submit"
+      hx-target="#link-screen" hx-swap="outerHTML" hx-sync="this:replace" hx-indicator="#link-busy">
+  {% csrf_token %}
+  {% if edit_id %}<input type="hidden" name="edit" value="{{ edit_id }}">{% endif %}
+  <input type="hidden" name="draft" value="{{ draft_id }}">
+  <input type="hidden" name="previous_main" value="{{ spec.main_id }}">
+  <input type="hidden" name="step_count" value="{{ steps|length }}">
+
+  <section class="card card-border bg-base-100">
+    <div class="card-body gap-3">
+      <div class="flex items-center justify-between gap-2">
+        <h2 class="card-title text-base">Main dataset</h2>
+        <span id="link-busy" class="loading loading-spinner loading-sm htmx-indicator" aria-label="Checking"></span>
+      </div>
+      <fieldset class="fieldset max-w-md">
+        <select name="main" class="select" aria-label="Main dataset"
+                title="The dataset with many rows, e.g. Sales. The result has one row per main row.">
+          {% for dataset in choices %}
+          <option value="{{ dataset.dataset_id }}" {% if dataset.dataset_id == spec.main_id %}selected{% endif %}>{{ dataset.name }} · {{ dataset.row_count|intcomma }} rows</option>
+          {% endfor %}
+        </select>
+        <p class="label">The one with many rows, e.g. Sales. Each result row is one of its rows.</p>
+      </fieldset>
+    </div>
+  </section>
+
+  {% for s in steps %}
+  <section class="card card-border bg-base-100">
+    <div class="card-body gap-4">
+      <input type="hidden" name="s{{ s.index }}_previous_lookup" value="{{ s.step.lookup_id }}">
+      <input type="hidden" name="s{{ s.index }}_previous_to" value="{{ s.step.linked_to }}">
+      <input type="hidden" name="s{{ s.index }}_pairs" value="{{ s.pairs|length }}">
+      <div class="flex items-center justify-between gap-2">
+        <h2 class="card-title text-base">Lookup {{ s.number }}{% if s.lookup %}: {{ s.lookup.name }}{% endif %}</h2>
+        <button type="submit" name="action" value="remove_step:{{ s.index }}" class="btn btn-sm btn-ghost text-error"
+                title="Take this lookup list out of the link">Remove</button>
+      </div>
+
+      <div class="grid gap-3 md:grid-cols-3">
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend">Lookup list</legend>
+          <select name="s{{ s.index }}_lookup" class="select" title="The list that adds details, e.g. Items. Each link value must appear in it only once.">
+            <option value="0" {% if not s.lookup %}selected{% endif %} disabled>Choose a dataset</option>
+            {% for dataset in choices %}
+            <option value="{{ dataset.dataset_id }}" {% if dataset.dataset_id == s.step.lookup_id %}selected{% endif %}>{{ dataset.name }}</option>
+            {% endfor %}
+          </select>
+        </fieldset>
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend">Linked to</legend>
+          <select name="s{{ s.index }}_to" class="select" title="Usually the main dataset. Pick an earlier lookup for a chain, e.g. Sub-category is linked to Items.">
+            {% for value, label in s.linked_options %}
+            <option value="{{ value }}" {% if value == s.step.linked_to %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </fieldset>
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend">Rows to keep</legend>
+          <select name="s{{ s.index }}_join" class="select" title="{% for key, label, tip in join_types %}{{ label }}: {{ tip }}{% if not forloop.last %}&#10;{% endif %}{% endfor %}">
+            {% for key, label, tip in join_types %}
+            <option value="{{ key }}" title="{{ tip }}" {% if key == s.step.join_type %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </fieldset>
+      </div>
+
+      {% if s.lookup and s.linked %}
+      <div class="space-y-2">
+        <p class="text-sm font-medium">Match where</p>
+        {% for j, pair in s.pairs %}
+        <div class="flex flex-wrap items-center gap-2">
+          <select name="s{{ s.index }}_p{{ j }}_left" class="select select-sm w-56" aria-label="Column in {{ s.linked.name }}" title="Column in {{ s.linked.name }}">
+            <option value="" {% if not pair.0 %}selected{% endif %} disabled>{{ s.linked.name }} column</option>
+            {% for column in s.linked.columns %}
+            <option value="{{ column.name }}" {% if column.name == pair.0 %}selected{% endif %}>{{ column.name }}</option>
+            {% endfor %}
+          </select>
+          <span class="text-base-content/60" title="Rows match when these two values are the same">=</span>
+          <select name="s{{ s.index }}_p{{ j }}_right" class="select select-sm w-56" aria-label="Column in {{ s.lookup.name }}" title="Column in {{ s.lookup.name }}">
+            <option value="" {% if not pair.1 %}selected{% endif %} disabled>{{ s.lookup.name }} column</option>
+            {% for column in s.lookup.columns %}
+            <option value="{{ column.name }}" {% if column.name == pair.1 %}selected{% endif %}>{{ column.name }}</option>
+            {% endfor %}
+          </select>
+          {% if s.pairs|length > 1 %}
+          <button type="submit" name="action" value="remove_pair:{{ s.index }}:{{ j }}" class="btn btn-sm btn-ghost btn-square" title="Remove this column pair" aria-label="Remove this column pair">✕</button>
+          {% endif %}
+        </div>
+        {% endfor %}
+        <button type="submit" name="action" value="add_pair:{{ s.index }}" class="btn btn-sm btn-ghost"
+                title="Match on one more column too, e.g. Item Code and Store">+ Add column</button>
+      </div>
+      {% endif %}
+
+      {% if s.check %}
+      <div class="flex flex-wrap items-center gap-2 text-sm">
+        <span class="badge {% if s.check.match_percent >= 90 %}badge-success{% elif s.check.match_percent >= 50 %}badge-warning{% else %}badge-error{% endif %} badge-soft cursor-help"
+              title="Of the {{ s.linked.name }} rows with a link value, the share that find their {{ s.lookup.name }} row">{{ s.check.match_percent }}% match</span>
+        <span>{{ s.check.matched|intcomma }} of {{ s.check.filled|intcomma }} {{ s.linked.name }} rows find a match.</span>
+        {% if s.check.blank %}<span class="text-base-content/60" title="Blank link values never match">{{ s.check.blank|intcomma }} more row{{ s.check.blank|pluralize:" has,s have" }} a blank link value.</span>{% endif %}
+      </div>
+      {% endif %}
+    </div>
+  </section>
+  {% endfor %}
+
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <button type="submit" name="action" value="add_step" class="btn btn-sm"
+            title="Add details from one more list, e.g. Customers or Branches">+ Add lookup</button>
+    <label class="label cursor-pointer gap-2 text-sm" title="When ticked, a101 and A101 count as the same value">
+      <input type="checkbox" name="ignore_case" class="checkbox checkbox-sm" {% if spec.ignore_case %}checked{% endif %}>
+      Ignore upper / lower case
+    </label>
+  </div>
+
+  {% if check.problems %}
+  <div role="alert" class="alert alert-soft alert-error items-start">
+    <ul class="list-disc space-y-1 pl-4">
+      {% for problem in check.problems %}<li>{{ problem }}</li>{% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  <section class="card card-border bg-base-100">
+    <div class="card-body gap-4">
+      <div class="flex flex-wrap items-end gap-4">
+        <div class="stats border border-base-300">
+          <div class="stat py-2" title="Rows the combined dataset will have">
+            <div class="stat-title">Rows</div>
+            <div class="stat-value text-xl tabular-nums">{% if check.row_count is not None %}{{ check.row_count|intcomma }}{% else %}–{% endif %}</div>
+          </div>
+          <div class="stat py-2" title="Columns the combined dataset will have">
+            <div class="stat-title">Columns</div>
+            <div class="stat-value text-xl tabular-nums">{{ check.columns|length }}</div>
+          </div>
+        </div>
+        <fieldset class="fieldset min-w-64 flex-1">
+          <legend class="fieldset-legend">Name</legend>
+          <input name="name" value="{{ name }}" placeholder="{{ suggested_name }}" maxlength="100"
+                 class="input w-full {% if name_problem %}input-error{% endif %}" title="Leave empty to use the suggested name">
+          {% if name_problem %}<p class="label text-error">{{ name_problem }}</p>{% endif %}
+        </fieldset>
+        <button type="submit" name="action" value="create" class="btn btn-primary" {% if not check.ok %}disabled{% endif %}
+                title="{% if check.ok %}Save this as a new dataset you can open and use{% else %}Fix the problems above first{% endif %}">
+          {% if edit_id %}Save changes{% else %}Create combined dataset{% endif %}
+        </button>
+      </div>
+    </div>
+  </section>
+</form>
+{% if preview %}
+<section class="card card-border bg-base-100">
+  <div class="card-body gap-2">
+    <h2 class="card-title text-base">Preview: first {{ preview_rows }} rows</h2>
+    {% with table=preview %}{% include "my_insights/partials/link_preview.html" %}{% endwith %}
+  </div>
+</section>
+{% endif %}
+</div>
