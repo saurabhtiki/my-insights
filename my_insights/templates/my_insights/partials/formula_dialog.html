@@ -1,0 +1,132 @@
+{% comment %}The calculated-field box. Outside the query form; Save posts both (hx-include).{% endcomment %}
+<dialog id="formula-dialog" class="modal" x-ref="dialog">
+  <div id="formula-box" class="modal-box max-w-3xl space-y-4">
+    <h3 class="text-lg font-bold">Calculated field</h3>
+    <input type="hidden" name="dataset" value="{{ dataset.dataset_id }}">
+    <input type="hidden" name="formula_original" x-ref="forig" value="{{ formula.original }}">
+
+    <fieldset class="fieldset py-0">
+      <legend class="fieldset-legend">Name</legend>
+      <input name="formula_name" x-ref="fname" value="{{ formula.name }}" maxlength="60" placeholder="e.g. Profit" class="input w-full sm:w-80"
+             title="How the new field is called in the field list">
+    </fieldset>
+
+    <div class="space-y-2">
+      <p class="text-xs font-medium text-base-content/70">Click (or drag into the box) to add:</p>
+      <div class="flex max-h-28 flex-wrap gap-1 overflow-y-auto" aria-label="Fields">
+        {% for f in fields %}{% if not f.info.error %}
+        <button type="button" draggable="true" class="badge badge-outline cursor-pointer hover:badge-primary"
+                data-name="{{ f.info.name }}" title="{{ f.kind_label }}"
+                @click="insert(fieldRef($el.dataset.name))"
+                @dragstart="$event.dataTransfer.setData('text/plain', fieldRef($el.dataset.name))">{{ f.icon }} {{ f.info.name }}</button>
+        {% endif %}{% endfor %}
+      </div>
+      <div class="flex flex-wrap gap-1" aria-label="Signs">
+        {% for sign, help in signs %}
+        <button type="button" draggable="true" class="kbd kbd-sm cursor-pointer" title="{{ help }}" data-sign="{{ sign }}"
+                @click="insert($el.dataset.sign)"
+                @dragstart="$event.dataTransfer.setData('text/plain', ' ' + $el.dataset.sign + ' ')">{{ sign }}</button>
+        {% endfor %}
+      </div>
+      <div class="flex flex-wrap gap-1" aria-label="Functions">
+        {% for name, help in functions %}
+        <button type="button" draggable="true" class="badge badge-ghost cursor-pointer font-mono text-xs" title="{{ help }}" data-fn="{{ name }}"
+                @click="insert($el.dataset.fn + ($el.dataset.fn === 'TODAY' ? '()' : '('))"
+                @dragstart="$event.dataTransfer.setData('text/plain', $el.dataset.fn + '(')">{{ name }}</button>
+        {% endfor %}
+      </div>
+    </div>
+
+    <fieldset class="fieldset py-0">
+      <legend class="fieldset-legend">Formula
+        {# opens to the right of the badge so it stays inside the dialog (daisyUI's tooltip centres and gets cut off) #}
+        <span class="group relative font-normal">
+          <span tabindex="0" role="button" class="badge badge-ghost badge-sm cursor-help" aria-label="Row formula or total formula?" aria-describedby="formula-kinds">ⓘ Row or total?</span>
+          <span id="formula-kinds" role="tooltip"
+                class="invisible absolute left-0 top-full z-50 mt-1 w-[min(22rem,calc(100vw-5rem))] space-y-2 rounded-box bg-neutral p-3 text-left text-xs leading-snug text-neutral-content opacity-0 shadow-lg transition-opacity group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100">
+            <span class="block"><b>Row formula:</b> worked out on each row, before grouping.<br>
+              e.g. <code>[Basic] + [DA]</code> → Total Salary of each person. Put it in Values as Sum to get it per department.</span>
+            <span class="block"><b>Total formula:</b> uses SUM / AVG / COUNT…, so it is worked out <i>after</i> grouping, on each group's totals.<br>
+              e.g. <code>SUM([DA]) / SUM([Basic]) * 100</code> → DA % of Basic for each department. Values only.</span>
+            <span class="block">Tip: for % and ratios use a total formula. Adding up each row's % gives a wrong answer.</span>
+          </span>
+        </span>
+      </legend>
+      <textarea name="formula_text" x-ref="ftext" rows="3" spellcheck="false" class="textarea w-full font-mono"
+                placeholder='e.g. [Sales] - [Cost]   or   IF([Qty] > 10, "Bulk", "Small")'
+                hx-post="{% url 'my_insights:formula_check' %}" hx-trigger="input changed delay:400ms, check-now"
+                hx-include="#formula-box" hx-target="#formula-check" hx-sync="this:replace"
+                title="Fields go in [brackets], text in &quot;quotes&quot;. SUM / AVG / COUNT… make a total formula (e.g. SUM([Profit]) / SUM([Sales]))">{{ formula.text }}</textarea>
+      <div id="formula-check" class="min-h-5">
+        {% if formula.problem %}<p class="text-sm text-error">✗ {{ formula.problem }}</p>{% endif %}
+      </div>
+    </fieldset>
+
+    <details class="collapse collapse-arrow border border-base-300" x-data="conditionBuilder()">
+      <summary class="collapse-title text-sm font-medium" title="Pick a field, a test and a result; adds an IF or IFS to the formula">IF / Else if — build by clicking</summary>
+      <div class="collapse-content space-y-2 text-sm">
+        <template x-for="(row, index) in rows" :key="index">
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="w-14 font-medium" x-text="index ? 'Else if' : 'When'"></span>
+            <select x-model="row.field" class="select select-sm w-44" aria-label="Field">
+              <option value="">Field</option>
+              {% for f in fields %}{% if not f.info.error and not f.values_only %}<option>{{ f.info.name }}</option>{% endif %}{% endfor %}
+            </select>
+            <select x-model="row.op" class="select select-sm w-20" aria-label="Test">
+              {% for sign in compare_signs %}<option>{{ sign }}</option>{% endfor %}
+            </select>
+            <input x-model="row.value" placeholder="value, e.g. 10" class="input input-sm w-32" aria-label="Value">
+            <span>then</span>
+            <input x-model="row.result" placeholder="result, e.g. Bulk" class="input input-sm w-32" aria-label="Result">
+            <button type="button" class="btn btn-ghost btn-xs btn-square" x-show="rows.length > 1" @click="rows.splice(index, 1)" title="Remove this line" aria-label="Remove">✕</button>
+          </div>
+        </template>
+        <div class="flex flex-wrap items-center gap-2">
+          <button type="button" class="btn btn-ghost btn-xs" @click="rows.push({ field: '', op: '>', value: '', result: '' })" title="Test one more thing when the ones above are not true">+ Else if</button>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="w-14 font-medium">Else</span>
+          <input x-model="otherwise" placeholder="e.g. Small (empty = blank)" class="input input-sm w-48" aria-label="Else">
+          <button type="button" class="btn btn-primary btn-sm" @click="insert(build())" title="Put this into the formula box">Insert</button>
+        </div>
+        <p class="text-xs text-base-content/60">Numbers stay numbers; other values become text. Type [Field] to use a field as the value or result.</p>
+      </div>
+    </details>
+
+    <details class="collapse collapse-arrow border border-base-300" x-data="switchBuilder()">
+      <summary class="collapse-title text-sm font-medium" title="Turn fixed values into other values, e.g. MUM → West">SWITCH — match a field's values</summary>
+      <div class="collapse-content space-y-2 text-sm">
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="w-14 font-medium">Field</span>
+          <select x-model="field" class="select select-sm w-44" aria-label="Field">
+            <option value="">Field</option>
+            {% for f in fields %}{% if not f.info.error and not f.values_only %}<option>{{ f.info.name }}</option>{% endif %}{% endfor %}
+          </select>
+        </div>
+        <template x-for="(row, index) in rows" :key="index">
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="w-14 font-medium">is</span>
+            <input x-model="row.match" placeholder="e.g. MUM" class="input input-sm w-32" aria-label="Value">
+            <span>→</span>
+            <input x-model="row.result" placeholder="e.g. West" class="input input-sm w-32" aria-label="Result">
+            <button type="button" class="btn btn-ghost btn-xs btn-square" x-show="rows.length > 1" @click="rows.splice(index, 1)" title="Remove this line" aria-label="Remove">✕</button>
+          </div>
+        </template>
+        <button type="button" class="btn btn-ghost btn-xs" @click="rows.push({ match: '', result: '' })">+ Add a value</button>
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="w-14 font-medium">Other</span>
+          <input x-model="otherwise" placeholder="e.g. Other (empty = blank)" class="input input-sm w-48" aria-label="Anything else">
+          <button type="button" class="btn btn-primary btn-sm" @click="insert(build())" title="Put this into the formula box">Insert</button>
+        </div>
+      </div>
+    </details>
+
+    <div class="modal-action">
+      <button type="button" class="btn btn-ghost" @click="$refs.dialog.close()">Cancel</button>
+      <button type="button" class="btn btn-primary"
+              hx-post="{% url 'my_insights:query' %}" hx-include="#query-form, #formula-box" hx-vals='{"action": "save_formula"}'
+              hx-target="#query-screen" hx-swap="outerHTML" title="Add the field to {{ dataset.name }}; every query on it can use it">Save field</button>
+    </div>
+  </div>
+  <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>

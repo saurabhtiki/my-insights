@@ -60,6 +60,10 @@ def remove_confirm(workspace, dataset) -> str:
     if dependants:
         names = ", ".join(f"“{d.name}”" for d in dependants)
         text += f" This also removes {names}, built from it."
+    queries = workspace.queries_of([dataset.dataset_id, *(d.dataset_id for d in dependants)])
+    if queries:
+        names = ", ".join(f"“{q.name}”" for q in queries)
+        text += f" Saved queries removed too: {names}."
     return text
 
 
@@ -88,12 +92,16 @@ def _cards(workspace) -> list[dict]:
     if workspace is None:
         return []
     return [
-        {"dataset": dataset, "remove_confirm": remove_confirm(workspace, dataset)}
+        {
+            "dataset": dataset,
+            "remove_confirm": remove_confirm(workspace, dataset),
+            "queries": workspace.queries_of([dataset.dataset_id]),
+        }
         for dataset in workspace.datasets.values()
     ]
 
 
-def _panel_response(request, workspace, results=(), expired=False):
+def panel_response(request, workspace, results=(), expired=False):
     """The dataset list (+ upload results): only the panel for htmx, else the whole page."""
     context = page_context(
         request, workspace, expired, results=list(results), cards=_cards(workspace)
@@ -118,7 +126,7 @@ def upload(request):
         check_capacity()
     except ServerBusy as error:
         workspace, expired = current_workspace(request)
-        return _panel_response(request, workspace, [{"ok": False, "message": str(error)}], expired)
+        return panel_response(request, workspace, [{"ok": False, "message": str(error)}], expired)
     handler = MemoryOnlyUploadHandler(
         request,
         max_file_bytes=conf.get("MAX_FILE_MB") * MB,
@@ -174,7 +182,7 @@ def _receive_upload(request, handler):
                 "message": f"Loaded as {names} ({rows:,} rows).",
             }
         )
-    return _panel_response(request, workspace, results, expired)
+    return panel_response(request, workspace, results, expired)
 
 
 @require_POST
@@ -230,6 +238,7 @@ def _dataset_page(request, workspace, dataset, rename_error: str = "", status: i
         rename_error=rename_error,
         preview_rows=PREVIEW_ROWS,
         remove_confirm=remove_confirm(workspace, dataset),
+        queries=workspace.queries_of([dataset.dataset_id]),
     )
     response = table_response(
         request,
@@ -360,5 +369,5 @@ def dataset_remove(request, dataset_id: int):
             names = ", ".join(f"“{name}”" for name in removed)
             results.append({"ok": True, "title": "Removed", "message": names})
     if request.headers.get("HX-Request") == "true":
-        return _panel_response(request, workspace, results)
+        return panel_response(request, workspace, results)
     return redirect("my_insights:home")

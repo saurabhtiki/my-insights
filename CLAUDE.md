@@ -3,4 +3,4 @@ Reusable Django add-on: upload CSV/Excel, explore, build queries/charts/dashboar
 Scope: `docs/project.md`. Current plan: `docs/plan.md`.
 
 # Current phase
-Phase 2 done (Relate datasets: combined datasets as views, 89 tests). Next: Phase 3 — Build a query.
+Phase 3 done (Build a query: boxes, filters, totals, calculated fields, 134 tests). Next: Phase 4 — Visualize.

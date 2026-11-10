@@ -45,6 +45,8 @@
         </div>
         {% if rename_error %}<p class="text-sm text-error">{{ rename_error }}</p>{% endif %}
       </form>
+      <a x-show="!renaming" href="{% url 'my_insights:query' %}?dataset={{ dataset.dataset_id }}" class="btn btn-sm btn-primary"
+         title="Ask a question of this data, e.g. Sum of Amount by Month">New query</a>
       <button x-show="!renaming" type="button" class="btn btn-sm" @click="renaming = true" title="Give this dataset a clearer name">Rename</button>
       {% if dataset.link %}
       <a x-show="!renaming" href="{% url 'my_insights:link' %}?edit={{ dataset.dataset_id }}" class="btn btn-sm"
@@ -57,6 +59,13 @@
       </form>
     </div>
   </div>
+
+  {% if queries %}
+  <div class="flex flex-wrap items-center gap-2 text-sm">
+    <span class="text-base-content/60">Saved queries:</span>
+    {% for saved in queries %}<a href="{% url 'my_insights:query' %}?open={{ saved.query_id }}" class="badge badge-outline hover:badge-primary" title="Open this saved query">{{ saved.name }}</a>{% endfor %}
+  </div>
+  {% endif %}
 
   <div role="tablist" class="tabs tabs-border">
     <a role="tab" href="?view=columns" class="tab {% if view == 'columns' %}tab-active{% endif %}"

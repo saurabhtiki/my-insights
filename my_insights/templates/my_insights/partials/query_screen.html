@@ -1,0 +1,338 @@
+{% load humanize %}
+{% comment %}
+Two sides on a big screen: the builder panel on the left (it scrolls on its own and stays in
+view) and the result on the right. On a small screen the panel slides in from the left
+("Edit query" button) and covers the result.
+{% endcomment %}
+<div id="query-screen" class="grid items-start gap-4 lg:gap-x-1 lg:grid-cols-[var(--panel-w,22rem)_auto_minmax(0,1fr)] xl:grid-cols-[var(--panel-w,26rem)_auto_minmax(0,1fr)]"
+     x-data="queryScreen({{ formula.open|yesno:'true,false' }})" @keydown.escape="closePanel()">
+<div x-show="panelOpen" x-transition.opacity class="fixed inset-0 z-40 bg-black/40 lg:hidden" @click="closePanel()" aria-hidden="true"></div>
+<form id="query-form" method="post" action="{% url 'my_insights:query' %}"
+      hx-post="{% url 'my_insights:query' %}"
+      hx-trigger="change[!target.closest('[data-hold]') && target.name != 'name'], submit"
+      hx-target="#query-screen" hx-swap="outerHTML" hx-sync="this:replace" hx-indicator="#query-busy"
+      aria-label="Query builder"
+      :data-open="panelOpen" {# not :class: htmx resets class on swap #}
+      x-init="requestAnimationFrame(() => requestAnimationFrame(() => $el.setAttribute('data-ready', '')))" {# slide only on open / close, not after each change #}
+      class="fixed inset-y-0 left-0 z-50 w-[min(26rem,92vw)] -translate-x-full data-open:translate-x-0 space-y-3 overflow-y-auto bg-base-200 p-3 shadow-xl data-ready:transition-transform
+             lg:sticky lg:top-4 lg:z-auto lg:max-h-[calc(100dvh-2rem)] lg:w-auto lg:translate-x-0! lg:bg-transparent lg:p-0 lg:pr-1 lg:shadow-none">
+  {% csrf_token %}
+  <input type="hidden" name="draft" value="{{ draft_id }}">
+  <input type="hidden" name="previous_dataset" value="{{ dataset.dataset_id }}">
+  <input type="hidden" name="drop_action" value="">
+  <input type="hidden" name="dirty" value="{{ dirty|yesno:'1,0' }}">
+  {% if query_id %}<input type="hidden" name="query_id" value="{{ query_id }}">{% endif %}
+
+  {# ---------- save bar ---------- #}
+  <section class="card card-border bg-base-100">
+    <div class="card-body gap-2 p-3">
+      <div class="flex items-center justify-between gap-2">
+        <h2 class="card-title text-sm">Query</h2>
+        <span class="flex items-center gap-2">
+          <span id="query-busy" class="loading loading-spinner loading-xs htmx-indicator" aria-label="Working"></span>
+          {% if dirty %}<span class="badge badge-warning badge-soft badge-sm" title="Changes are not saved yet">Not saved</span>{% endif %}
+          <button type="button" class="btn btn-ghost btn-xs btn-square lg:hidden" @click="closePanel()"
+                  title="Close the builder and see the result" aria-label="Close the builder">✕</button>
+        </span>
+      </div>
+      <input name="name" value="{{ name }}" placeholder="{{ suggested_name }}" maxlength="100" aria-label="Query name"
+             class="input input-sm w-full {% if name_problem %}input-error{% endif %}" title="Query name. Leave empty to use the suggested name">
+      {% if name_problem %}<p class="text-xs text-error">{{ name_problem }}</p>{% endif %}
+      <div class="flex gap-2">
+        <button type="submit" name="action" value="save" class="btn btn-primary btn-sm flex-1"
+                title="{% if saved %}Save the changes to this query{% else %}Keep this query so you can open it again (and chart it later){% endif %}">
+          {% if saved %}Save changes{% else %}Save query{% endif %}
+        </button>
+        <button type="submit" name="action" value="clear" class="btn btn-ghost btn-sm"
+                title="Empty all four boxes and start again">Clear boxes</button>
+      </div>
+    </div>
+  </section>
+
+  <div class="space-y-3">
+    {# ---------- field list ---------- #}
+    <aside class="card card-border bg-base-100">
+      <div class="card-body gap-2 p-3" x-data="{ find: '' }">
+        <fieldset class="fieldset py-0">
+          <legend class="fieldset-legend">Dataset</legend>
+          <select name="dataset" class="select select-sm w-full" title="The data this query asks about. Changing it empties the boxes.">
+            {% for item in all_datasets %}
+            <option value="{{ item.dataset_id }}" {% if item.dataset_id == dataset.dataset_id %}selected{% endif %}>{{ item.name }}</option>
+            {% endfor %}
+          </select>
+        </fieldset>
+        <label class="input input-sm w-full" data-hold>
+          <span class="text-base-content/50" aria-hidden="true">⌕</span>
+          <input type="search" x-model="find" placeholder="Find a field" aria-label="Find a field" @keydown.enter.prevent>
+        </label>
+        <p class="text-xs text-base-content/60">Drag a field into a box, or use + Add on a box.</p>
+        <ul data-field-list class="flex max-h-[30vh] min-h-24 flex-col gap-1 overflow-y-auto pr-1">
+          <li data-field="*" data-values-only="1" data-search="count of rows" x-show="$el.dataset.search.includes(find.toLowerCase())"
+              class="flex cursor-grab items-center gap-2 rounded-field border border-base-300 bg-base-100 px-2 py-1 text-sm hover:border-primary"
+              title="How many rows: drag into Values">
+            <span class="badge badge-ghost badge-sm w-8 shrink-0">∑</span><span class="truncate">Count of rows</span>
+          </li>
+          {% for f in fields %}
+          <li data-field="{{ f.info.name }}" {% if f.values_only %}data-values-only="1"{% endif %} data-search="{{ f.info.name|lower }}"
+              x-show="$el.dataset.search.includes(find.toLowerCase())"
+              class="group flex cursor-grab items-center gap-2 rounded-field border {% if f.info.error %}border-error{% else %}border-base-300{% endif %} bg-base-100 px-2 py-1 text-sm hover:border-primary"
+              title="{% if f.info.error %}{{ f.info.error }}{% elif f.info.calculated %}{{ f.info.name }} = {{ f.info.formula }}{% if f.values_only %} (a total formula: worked out after grouping, Values only){% else %} (a row formula: worked out on each row){% endif %}{% else %}{{ f.kind_label }}{% endif %}">
+            <span class="badge {% if f.info.calculated %}badge-primary badge-soft{% else %}badge-ghost{% endif %} badge-sm w-8 shrink-0" title="{{ f.kind_label }}">{{ f.icon }}</span>
+            <span class="min-w-0 flex-1 truncate">{{ f.info.name }}</span>
+            {% if f.info.calculated %}
+            <button type="button" class="btn btn-ghost btn-xs btn-square" title="Change this calculated field" aria-label="Change {{ f.info.name }}"
+                    data-name="{{ f.info.name }}" data-formula="{{ f.info.formula }}"
+                    @click="openFormula($el.dataset.name, $el.dataset.formula, $el.dataset.name)">✎</button>
+            <button type="submit" name="action" value="remove_formula:{{ f.info.name }}" class="btn btn-ghost btn-xs btn-square text-error"
+                    title="Remove this calculated field" aria-label="Remove {{ f.info.name }}"
+                    data-confirm="{{ f.remove_confirm }}" onclick="return confirm(this.dataset.confirm)">✕</button>
+            {% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+        <button type="button" class="btn btn-sm" @click="newFormula()"
+                title="Make a new field from a formula.&#10;Row formula, worked out on each row: Total Salary = [Basic] + [DA].&#10;Total formula, worked out after grouping: DA % = SUM([DA]) / SUM([Basic]) * 100 (Values only).">ƒ New calculated field</button>
+      </div>
+    </aside>
+
+    {# ---------- the four boxes ---------- #}
+    <div class="space-y-3">
+      {# Group by #}
+      <section class="card card-border bg-base-100">
+        <div class="card-body gap-2 p-3">
+          <div class="flex items-center justify-between gap-2">
+            <h2 class="card-title text-sm" title="One result row for each different value, e.g. Branch → one row per branch">Group by</h2>
+            {% include "my_insights/partials/query_add_menu.html" with zone="group" title="Add a field to Group by" %}
+          </div>
+          <ul data-zone="group" class="min-h-14 space-y-2 rounded-box border border-dashed border-base-300 p-2">
+            {% for g in groups %}
+            <li data-item class="flex items-center gap-2 rounded-field bg-base-200 px-2 py-1 text-sm">
+              <input type="hidden" name="groups" value="{{ g.item.key }}">
+              <input type="hidden" name="{{ g.item.key }}_column" value="{{ g.item.column }}">
+              <span data-handle class="cursor-grab select-none text-base-content/50" title="Drag to change the order">⠿</span>
+              <span class="min-w-0 flex-1 truncate font-medium {% if not g.info %}text-error{% endif %}" title="{{ g.item.column }}">{{ g.item.column }}</span>
+              {% if g.parts %}
+              <select name="{{ g.item.key }}_part" class="select select-xs w-36" title="How to group dates, e.g. Month → May 2026, Financial year → FY 2026-27 (April to March)">
+                {% for key, label in g.parts %}<option value="{{ key }}" {% if key == g.item.date_part %}selected{% endif %}>{{ label }}</option>{% endfor %}
+              </select>
+              {% endif %}
+              <button type="submit" name="action" value="remove:{{ g.item.key }}" class="btn btn-ghost btn-xs btn-square" title="Take out of Group by" aria-label="Remove">✕</button>
+            </li>
+            {% empty %}
+            <li class="p-2 text-xs text-base-content/50">Drag a field here. Example: Branch → one row per branch.</li>
+            {% endfor %}
+          </ul>
+        </div>
+      </section>
+
+      {# Values #}
+      <section class="card card-border bg-base-100">
+        <div class="card-body gap-2 p-3">
+          <div class="flex items-center justify-between gap-2">
+            <h2 class="card-title text-sm" title="Numbers worked out for each group, e.g. Sum of Amount">Values</h2>
+            {% include "my_insights/partials/query_add_menu.html" with zone="value" title="Add a value, e.g. Sum of Amount" %}
+          </div>
+          <ul data-zone="value" class="min-h-14 space-y-2 rounded-box border border-dashed border-base-300 p-2">
+            {% for v in values %}
+            <li data-item class="flex flex-wrap items-center gap-2 rounded-field bg-base-200 px-2 py-1 text-sm">
+              <input type="hidden" name="values" value="{{ v.item.key }}">
+              <input type="hidden" name="{{ v.item.key }}_column" value="{{ v.item.column }}">
+              <span data-handle class="cursor-grab select-none text-base-content/50" title="Drag to change the order">⠿</span>
+              {% if v.aggregations %}
+              <select name="{{ v.item.key }}_agg" class="select select-xs w-32" title="How to add up {{ v.item.column }}">
+                {% for key, label, help in v.aggregations %}<option value="{{ key }}" title="{{ help }}" {% if key == v.item.agg %}selected{% endif %}>{{ label }}</option>{% endfor %}
+              </select>
+              <span class="text-base-content/60">of</span>
+              <span class="min-w-0 truncate font-medium" title="{{ v.item.column }}">{{ v.item.column }}</span>
+              {% else %}
+              <input type="hidden" name="{{ v.item.key }}_agg" value="{{ v.item.agg }}">
+              <span class="min-w-0 truncate font-medium {% if v.item.agg != 'rows' and not v.info %}text-error{% endif %}">{% if v.item.agg == "rows" %}Count of rows{% else %}{{ v.item.column }}{% endif %}</span>
+              {% if v.item.agg == "formula" %}<span class="badge badge-primary badge-soft badge-xs" title="Worked out after grouping, on each group's totals, e.g. SUM([DA]) / SUM([Basic]) per department">total formula</span>{% endif %}
+              {% endif %}
+              <span class="flex-1"></span>
+              <input name="{{ v.item.key }}_label" value="{{ v.item.label }}" placeholder="{{ v.default_label }}" maxlength="100"
+                     class="input input-xs w-36" title="The column heading. Leave empty for “{{ v.default_label }}”" aria-label="Heading">
+              {% if v.number_result %}
+              <select name="{{ v.item.key }}_format" class="select select-xs w-28" title="How the numbers look: decimals and the ₹ sign">
+                <option value="" {% if not v.item.number_format %}selected{% endif %}>Auto</option>
+                {% for key, label in number_formats %}<option value="{{ key }}" {% if key == v.item.number_format %}selected{% endif %}>{{ label }}</option>{% endfor %}
+              </select>
+              {% endif %}
+              <button type="submit" name="action" value="remove:{{ v.item.key }}" class="btn btn-ghost btn-xs btn-square" title="Take out of Values" aria-label="Remove">✕</button>
+            </li>
+            {% empty %}
+            <li class="p-2 text-xs text-base-content/50">Drag a field here. Numbers are added up (Sum); text is counted.</li>
+            {% endfor %}
+          </ul>
+        </div>
+      </section>
+
+      {# Filters #}
+      <section class="card card-border bg-base-100">
+        <div class="card-body gap-2 p-3">
+          <div class="flex items-center justify-between gap-2">
+            <h2 class="card-title text-sm" title="Keep only rows that pass every filter (all must be true)">Filters</h2>
+            {% include "my_insights/partials/query_add_menu.html" with zone="filter" title="Add a filter" %}
+          </div>
+          <ul data-zone="filter" class="min-h-14 space-y-2 rounded-box border border-dashed border-base-300 p-2">
+            {% for f in filters %}
+            {% with key=f.item.key %}
+            <li data-item class="flex flex-wrap items-center gap-2 rounded-field bg-base-200 px-2 py-1 text-sm">
+              <input type="hidden" name="filters" value="{{ key }}">
+              <input type="hidden" name="{{ key }}_column" value="{{ f.item.column }}">
+              <input type="hidden" name="{{ key }}_value_key" value="{{ f.item.value_key }}">
+              <span data-handle class="cursor-grab select-none text-base-content/50" title="Drag to change the order">⠿</span>
+              <span class="min-w-0 truncate font-medium {% if not f.ops %}text-error{% endif %}"
+                    title="{% if f.item.value_key %}A filter on the total of each group{% else %}{{ f.label }}{% endif %}">{% if f.item.value_key %}Total: {% endif %}{{ f.label }}</span>
+              {% if f.ops %}
+              <select name="{{ key }}_op" class="select select-xs w-40" title="The kind of test">
+                {% for op, label in f.ops %}<option value="{{ op }}" {% if op == f.item.op %}selected{% endif %}>{{ label }}</option>{% endfor %}
+              </select>
+              {% endif %}
+              <span class="flex-1"></span>
+              {% if f.picked_count or f.a or f.b %}
+              <button type="submit" name="action" value="clear_filter:{{ key }}" class="btn btn-ghost btn-xs"
+                      title="Empty what you picked or typed (untick all), but keep this filter to fill again">Clear</button>
+              {% endif %}
+              <button type="submit" name="action" value="remove:{{ key }}" class="btn btn-ghost btn-xs btn-square" title="Remove this filter" aria-label="Remove">✕</button>
+              {# the values to test, on their own line (hidden when the test needs none, e.g. "is blank") #}
+              <div class="hidden basis-full flex-wrap items-center gap-2 pb-1 has-[*]:flex">
+              {% if not f.ops %}
+              {% elif f.item.op == "in" or f.item.op == "not_in" %}
+              <div class="dropdown w-full" data-hold>
+                <div tabindex="0" role="button" class="btn btn-xs"
+                     hx-get="{% url 'my_insights:filter_values' %}?dataset={{ dataset.dataset_id }}&key={{ key }}&column={{ f.item.column|urlencode }}"
+                     hx-trigger="focus once" hx-target="#ticks-{{ key }}" hx-swap="innerHTML" hx-include="#ticks-{{ key }}"
+                     title="Tick the values to {% if f.item.op == 'in' %}keep{% else %}leave out{% endif %}">
+                  {% if f.picked_count %}{{ f.picked_count }} ticked{% else %}Choose values{% endif %} ▾</div>
+                <div tabindex="0" class="dropdown-content z-30 mt-1 w-full space-y-2 rounded-box border border-base-300 bg-base-100 p-3 shadow-lg">
+                  <input type="search" name="q" placeholder="Search any value" class="input input-sm w-full" aria-label="Search values"
+                         hx-get="{% url 'my_insights:filter_values' %}?dataset={{ dataset.dataset_id }}&key={{ key }}&column={{ f.item.column|urlencode }}"
+                         hx-trigger="input changed delay:300ms" hx-target="#ticks-{{ key }}" hx-swap="innerHTML" hx-include="#ticks-{{ key }}" hx-sync="this:replace"
+                         @keydown.enter.prevent>
+                  <div id="ticks-{{ key }}" class="max-h-60 overflow-y-auto">
+                    {% include "my_insights/partials/tick_list.html" with choices=f.choices %}
+                  </div>
+                  <p class="text-xs text-base-content/60">Shows the 500 most common values; search finds any.</p>
+                  <button type="submit" class="btn btn-primary btn-sm w-full" title="Use the ticked values">Apply</button>
+                </div>
+              </div>
+              {% elif f.item.op == "contains" %}
+              <input name="{{ key }}_a" value="{{ f.a }}" placeholder="text" class="input input-xs w-32" aria-label="Text to look for">
+              {% elif f.item.op == "between" and f.kind == "date" %}
+              <input type="date" name="{{ key }}_a" value="{{ f.a }}" class="input input-xs w-36" title="From (leave empty for no start)" aria-label="From">
+              <span class="text-base-content/60">to</span>
+              <input type="date" name="{{ key }}_b" value="{{ f.b }}" class="input input-xs w-36" title="To (leave empty for no end)" aria-label="To">
+              {% elif f.item.op == "between" %}
+              <input name="{{ key }}_a" value="{{ f.a }}" inputmode="decimal" placeholder="from" class="input input-xs w-24" aria-label="From">
+              <span class="text-base-content/60">and</span>
+              <input name="{{ key }}_b" value="{{ f.b }}" inputmode="decimal" placeholder="to" class="input input-xs w-24" aria-label="To">
+              {% elif f.item.op == "last_days" %}
+              <input name="{{ key }}_a" value="{{ f.a }}" inputmode="numeric" placeholder="30" class="input input-xs w-20" aria-label="Number of days">
+              <span class="text-base-content/60">days</span>
+              {% elif f.item.op in "eq ne gt lt" %}
+              <input name="{{ key }}_a" value="{{ f.a }}" inputmode="decimal" placeholder="e.g. 1,00,000" class="input input-xs w-28" aria-label="Number">
+              {% endif %}
+              </div>
+            </li>
+            {% endwith %}
+            {% empty %}
+            <li class="p-2 text-xs text-base-content/50">Drag a field here. Example: Date → this financial year.</li>
+            {% endfor %}
+          </ul>
+        </div>
+      </section>
+
+      {# Sort #}
+      <section class="card card-border bg-base-100">
+        <div class="card-body gap-2 p-3">
+          <div class="flex items-center justify-between gap-2">
+            <h2 class="card-title text-sm" title="The order of the result rows. With no sort, rows follow Group by.">Sort</h2>
+            {% if sort_options %}
+            <div class="dropdown dropdown-end">
+              <div tabindex="0" role="button" class="btn btn-ghost btn-xs" title="Sort by a group or value">+ Add</div>
+              <ul tabindex="0" class="menu dropdown-content menu-sm z-30 mt-1 max-h-72 w-64 flex-nowrap overflow-y-auto rounded-box border border-base-300 bg-base-100 p-2 shadow-lg">
+                {% for key, label in sort_options %}<li><button type="submit" name="action" value="add_sort:{{ key }}">{{ label }}</button></li>{% endfor %}
+              </ul>
+            </div>
+            {% endif %}
+          </div>
+          <ul data-zone="sort" class="min-h-14 space-y-2 rounded-box border border-dashed border-base-300 p-2">
+            {% for s in sorts %}
+            <li data-item class="flex items-center gap-2 rounded-field bg-base-200 px-2 py-1 text-sm">
+              <input type="hidden" name="sorts" value="{{ s.item.key }}">
+              <input type="hidden" name="{{ s.item.key }}_target" value="{{ s.item.target }}">
+              <span data-handle class="cursor-grab select-none text-base-content/50" title="Drag: the first sort wins, the next breaks ties">⠿</span>
+              <span class="min-w-0 flex-1 truncate font-medium">{{ s.label }}</span>
+              <select name="{{ s.item.key }}_desc" class="select select-xs w-36" title="Which way to sort">
+                <option value="0" {% if not s.item.descending %}selected{% endif %}>{% if s.is_value %}Smallest first{% else %}A → Z, oldest first{% endif %}</option>
+                <option value="1" {% if s.item.descending %}selected{% endif %}>{% if s.is_value %}Biggest first{% else %}Z → A, newest first{% endif %}</option>
+              </select>
+              <button type="submit" name="action" value="remove:{{ s.item.key }}" class="btn btn-ghost btn-xs btn-square" title="Remove this sort" aria-label="Remove">✕</button>
+            </li>
+            {% empty %}
+            <li class="p-2 text-xs text-base-content/50">Use + Add to sort by a group or value, e.g. Sum of Amount, biggest first.</li>
+            {% endfor %}
+          </ul>
+          <label class="flex flex-wrap items-center gap-2 text-sm" title="Keep only the first rows after sorting, e.g. Top 10 branches by Sum of Amount. Empty = all rows.">
+            Show only the top
+            <input name="top_n" value="{{ spec.top_n|default_if_none:'' }}" inputmode="numeric" placeholder="all" class="input input-xs w-20" aria-label="Top rows">
+            rows
+          </label>
+        </div>
+      </section>
+    </div>
+  </div>
+</form>
+
+{# drag handle between the builder and the result (big screens only) #}
+<div role="separator" aria-orientation="vertical" aria-label="Builder width" tabindex="0"
+     class="group sticky top-4 hidden h-[calc(100dvh-2rem)] w-3 cursor-col-resize touch-none justify-center lg:flex"
+     title="Drag to make the builder wider or narrower. Double-click to go back to the normal width. (Arrow keys work too.)"
+     @pointerdown.prevent="startResize($event)" @dblclick="resetWidth()"
+     @keydown.left.prevent="nudgeWidth(-24)" @keydown.right.prevent="nudgeWidth(24)">
+  <span class="h-full w-0.5 rounded-full bg-base-300 group-hover:bg-primary group-focus-visible:bg-primary"></span>
+</div>
+
+{# ---------- right side: notice, problems and result ---------- #}
+<div class="min-w-0 space-y-4">
+<button type="button" class="btn btn-primary btn-sm lg:hidden" @click="openPanel()"
+        title="Open the builder: fields, Group by, Values, Filters and Sort">✎ Edit query</button>
+{% if notice %}
+<div role="status" class="alert alert-soft alert-success"><span>{{ notice }}</span></div>
+{% endif %}
+{% if plan.problems %}
+<div role="alert" class="alert alert-soft alert-error items-start">
+  <ul class="list-disc space-y-1 pl-4">{% for problem in plan.problems %}<li>{{ problem }}</li>{% endfor %}</ul>
+</div>
+{% endif %}
+{% if plan.notes %}
+<div role="status" class="alert alert-soft alert-info items-start">
+  <ul class="list-disc space-y-1 pl-4">{% for note in plan.notes %}<li>{{ note }}</li>{% endfor %}</ul>
+</div>
+{% endif %}
+
+{% if table %}
+<section class="card card-border bg-base-100">
+  <div class="card-body gap-3 p-4">
+    <div class="flex flex-wrap items-center justify-between gap-2">
+      <h2 class="card-title text-base">Result <span class="badge badge-ghost tabular-nums" title="Rows in the answer">{{ row_count|intcomma }} row{{ row_count|pluralize }}</span></h2>
+      {% if result.truncated %}<span class="badge badge-warning badge-soft" title="Add filters or fewer Group by fields to see everything">Showing the first {{ row_cap|intcomma }} rows</span>{% endif %}
+    </div>
+    {% include "my_insights/partials/query_result.html" %}
+    {% if totals %}
+    <div class="flex flex-wrap items-baseline gap-x-6 gap-y-2 rounded-box bg-base-200 px-4 py-3 text-sm"
+         title="{% if spec.top_n or spec.filters %}Worked out over the rows that pass the filters{% if spec.top_n %} in the groups shown{% endif %}{% else %}Worked out over all rows{% endif %} — an average is the average of all those rows, not of the group averages">
+      <span class="font-semibold">Total</span>
+      {% for label, value in totals %}
+      <span><span class="text-base-content/60">{{ label }}:</span> <span class="font-semibold tabular-nums">{{ value }}</span></span>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+</section>
+{% endif %}
+</div>
+
+{% include "my_insights/partials/formula_dialog.html" %}
+</div>

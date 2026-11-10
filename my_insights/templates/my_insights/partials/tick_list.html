@@ -1,0 +1,10 @@
+{% load humanize %}
+{% for value, label, rows, ticked in choices %}
+<label class="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-sm hover:bg-base-200">
+  <input type="checkbox" name="{{ key }}_values" value="{{ value }}" class="checkbox checkbox-xs" {% if ticked %}checked{% endif %}>
+  <span class="min-w-0 flex-1 truncate {% if value == '__blank__' %}italic text-base-content/60{% endif %}" title="{{ label }}">{{ label }}</span>
+  {% if rows is not None %}<span class="text-xs tabular-nums text-base-content/50" title="Rows with this value">{{ rows|intcomma }}</span>{% endif %}
+</label>
+{% empty %}
+<p class="py-2 text-xs text-base-content/60">No values found.</p>
+{% endfor %}

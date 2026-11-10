@@ -1,0 +1,183 @@
+{% extends base_template %}
+{% block title %}{% if saved %}{{ saved.name }}{% else %}New query{% endif %}{% endblock %}
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+<script>
+  // The builder width the user dragged to last time (before the page draws, so no jump).
+  try {
+    const width = Number(localStorage.getItem("myInsightsPanelWidth"));
+    if (width) document.documentElement.style.setProperty("--panel-w", width + "px");
+  } catch (error) { /* private window: normal width */ }
+</script>
+{% endblock %}
+{% block content %}
+{% include "my_insights/partials/idle_script.html" %}
+<div class="space-y-6" hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
+  <div class="breadcrumbs text-sm">
+    <ul>
+      <li><a href="{% url 'my_insights:home' %}" title="Back to all your uploaded data">Your data</a></li>
+      <li><a href="{% url 'my_insights:dataset' dataset.dataset_id %}" title="This dataset's columns and rows">{{ dataset.name }}</a></li>
+      <li>{% if saved %}{{ saved.name }}{% else %}New query{% endif %}</li>
+    </ul>
+  </div>
+
+  {% with heading="Build a query" subheading="Drag fields into the boxes on the left, or use + Add. The answer updates as you go." %}
+    {% include "my_insights/partials/top_bar.html" %}
+  {% endwith %}
+
+  {% include "my_insights/partials/query_screen.html" %}
+  {% include "my_insights/partials/idle_watch.html" %}
+</div>
+
+<script>
+  // ---- formula helpers (used by the calculated-field box) ----
+  function fieldRef(name) { return "[" + String(name).replace(/]/g, "]]") + "]"; }
+  function formulaLiteral(value) {
+    const text = String(value ?? "").trim();
+    if (text === "") return '""';
+    if (/^-?\d+(\.\d+)?$/.test(text) || /^\[.*\]$/.test(text)) return text;
+    return '"' + text.replace(/"/g, '""') + '"';
+  }
+  function queryScreen(formulaOpen) {
+    return {
+      // Small screens: is the builder panel slid in? Kept on window, because every change
+      // swaps in a new screen.
+      panelOpen: window.queryPanelOpen === true,
+      openPanel() { this.panelOpen = window.queryPanelOpen = true; },
+      closePanel() { this.panelOpen = window.queryPanelOpen = false; },
+      // Big screens: builder width. Kept as --panel-w on <html> (htmx would undo a style on the
+      // swapped screen) and remembered in this browser.
+      setWidth(px) {
+        const max = Math.max(320, window.innerWidth * 0.6);
+        const width = Math.round(Math.min(max, Math.max(260, px)));
+        document.documentElement.style.setProperty("--panel-w", width + "px");
+        try { localStorage.setItem("myInsightsPanelWidth", width); } catch (error) { /* private window: just not remembered */ }
+      },
+      resetWidth() {
+        document.documentElement.style.removeProperty("--panel-w");
+        try { localStorage.removeItem("myInsightsPanelWidth"); } catch (error) { /* nothing to forget */ }
+      },
+      nudgeWidth(step) { this.setWidth(document.getElementById("query-form").offsetWidth + step); },
+      startResize(event) {
+        const handle = event.currentTarget;
+        const startX = event.clientX;
+        const startWidth = document.getElementById("query-form").offsetWidth;
+        handle.setPointerCapture(event.pointerId);
+        const move = (moveEvent) => this.setWidth(startWidth + moveEvent.clientX - startX);
+        const stop = () => {
+          handle.removeEventListener("pointermove", move);
+          handle.removeEventListener("pointerup", stop);
+          handle.removeEventListener("pointercancel", stop);
+        };
+        handle.addEventListener("pointermove", move);
+        handle.addEventListener("pointerup", stop);
+        handle.addEventListener("pointercancel", stop);
+      },
+      init() { if (formulaOpen) this.$nextTick(() => this.$refs.dialog.showModal()); },
+      newFormula() { this.openFormula("", "", ""); },
+      openFormula(name, text, original) {
+        this.$refs.fname.value = name;
+        this.$refs.ftext.value = text;
+        this.$refs.forig.value = original;
+        document.getElementById("formula-check").innerHTML = "";
+        this.$refs.dialog.showModal();
+        if (text) htmx.trigger(this.$refs.ftext, "check-now");
+        (name ? this.$refs.ftext : this.$refs.fname).focus();
+      },
+      insert(snippet) {
+        if (!snippet) return;
+        const box = this.$refs.ftext;
+        const start = box.selectionStart ?? box.value.length;
+        const end = box.selectionEnd ?? start;
+        const before = box.value.slice(0, start);
+        const spacer = before && !/[\s(]$/.test(before) && !/^[),]/.test(snippet) ? " " : "";
+        box.value = before + spacer + snippet + box.value.slice(end);
+        const caret = start + spacer.length + snippet.length;
+        box.focus();
+        box.setSelectionRange(caret, caret);
+        box.dispatchEvent(new Event("input", { bubbles: true }));
+      },
+    };
+  }
+  function conditionBuilder() {
+    return {
+      rows: [{ field: "", op: ">", value: "", result: "" }],
+      otherwise: "",
+      build() {
+        const parts = this.rows.filter((row) => row.field).map((row) =>
+          [fieldRef(row.field) + " " + row.op + " " + formulaLiteral(row.value), formulaLiteral(row.result)]);
+        if (!parts.length) return "";
+        const tail = this.otherwise.trim() === "" ? "" : ", " + formulaLiteral(this.otherwise);
+        if (parts.length === 1) return "IF(" + parts[0].join(", ") + tail + ")";
+        return "IFS(" + parts.map((part) => part.join(", ")).join(", ") + tail + ")";
+      },
+    };
+  }
+  function switchBuilder() {
+    return {
+      field: "",
+      rows: [{ match: "", result: "" }],
+      otherwise: "",
+      build() {
+        if (!this.field) return "";
+        const parts = [fieldRef(this.field)];
+        this.rows.filter((row) => row.match.trim() !== "").forEach((row) =>
+          parts.push(formulaLiteral(row.match), formulaLiteral(row.result)));
+        if (this.otherwise.trim() !== "") parts.push(formulaLiteral(this.otherwise));
+        return "SWITCH(" + parts.join(", ") + ")";
+      },
+    };
+  }
+
+  // ---- drag and drop: a field dropped in a box posts "add_group:Amount" etc. ----
+  function querySubmit(action) {
+    const form = document.getElementById("query-form");
+    if (!form) return;
+    form.querySelector("[name=drop_action]").value = action;
+    htmx.trigger(form, "submit");
+  }
+  htmx.onLoad(function (root) {
+    if (!window.Sortable) return;
+    root.querySelectorAll("[data-field-list]").forEach((list) => Sortable.create(list, {
+      group: { name: "query", pull: "clone", put: false }, sort: false, draggable: "[data-field]",
+    }));
+    root.querySelectorAll("[data-zone]").forEach((zone) => Sortable.create(zone, {
+      group: {
+        name: "query", pull: false,
+        put: (to, from, dragged) => !!dragged.dataset.field && zone.dataset.zone !== "sort"
+          && (zone.dataset.zone === "value" || !dragged.dataset.valuesOnly),
+      },
+      draggable: "[data-item]", handle: "[data-handle]", animation: 150,
+      onAdd: (event) => { const field = event.item.dataset.field; event.item.remove(); querySubmit("add_" + zone.dataset.zone + ":" + field); },
+      onUpdate: () => querySubmit(""),
+    }));
+  });
+
+  // ---- keep the builder panel's scroll place when the screen is swapped after a change ----
+  if (!window.queryScrollKeeper) {
+    window.queryScrollKeeper = true;
+    const scrollers = () => {
+      const panel = document.getElementById("query-form");
+      return panel ? [panel, panel.querySelector("[data-field-list]")] : [];
+    };
+    document.body.addEventListener("htmx:beforeSwap", (event) => {
+      if (event.detail.target.id === "query-screen") window.queryScroll = scrollers().map((box) => box && box.scrollTop);
+    });
+    document.body.addEventListener("htmx:afterSwap", () => {
+      if (!window.queryScroll) return;
+      scrollers().forEach((box, index) => { if (box) box.scrollTop = window.queryScroll[index] || 0; });
+      window.queryScroll = null;
+    });
+  }
+
+  // ---- warn before leaving with unsaved changes ----
+  if (!window.queryLeaveGuard) {
+    window.queryLeaveGuard = true;
+    document.body.addEventListener("query-saved", () => { window.querySaved = true; });
+    window.addEventListener("beforeunload", (event) => {
+      const dirty = document.querySelector("#query-form [name=dirty]");
+      if (dirty && dirty.value === "1" && !window.querySaved) { event.preventDefault(); event.returnValue = ""; }
+    });
+  }
+</script>
+{% endblock %}

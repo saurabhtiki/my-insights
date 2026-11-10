@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import link_views, views
+from . import link_views, query_views, views
 
 app_name = "my_insights"
 
@@ -15,4 +15,9 @@ urlpatterns = [
     path("link/", link_views.link, name="link"),
     path("link/preview/<str:draft_id>/", link_views.link_preview, name="link_preview"),
     path("link/suggestions/", link_views.link_suggestions, name="link_suggestions"),
+    path("query/", query_views.query, name="query"),
+    path("query/table/<str:draft_id>/", query_views.query_table, name="query_table"),
+    path("query/formula-check/", query_views.formula_check, name="formula_check"),
+    path("query/values/", query_views.filter_values, name="filter_values"),
+    path("query/<int:query_id>/remove/", query_views.query_remove, name="query_remove"),
 ]

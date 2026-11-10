@@ -46,8 +46,24 @@
           <div><div class="text-lg font-semibold tabular-nums">{{ dataset.row_count|intcomma }}</div><div class="text-base-content/60">rows</div></div>
           <div><div class="text-lg font-semibold tabular-nums">{{ dataset.columns|length }}</div><div class="text-base-content/60">columns</div></div>
         </div>
+        {% if card.queries %}
+        <ul class="space-y-1 border-t border-base-300 pt-2 text-sm" aria-label="Saved queries">
+          {% for saved in card.queries %}
+          <li class="flex items-center gap-2">
+            <span class="text-base-content/50" aria-hidden="true">▤</span>
+            <a href="{% url 'my_insights:query' %}?open={{ saved.query_id }}" class="link link-hover min-w-0 flex-1 truncate" title="Open this saved query">{{ saved.name }}</a>
+            <button type="button" class="btn btn-ghost btn-xs btn-square text-error" aria-label="Remove {{ saved.name }}"
+                    hx-post="{% url 'my_insights:query_remove' saved.query_id %}" hx-vals='{"from": "home"}' hx-target="#workspace-panel" hx-swap="outerHTML"
+                    hx-confirm="Remove the saved query “{{ saved.name }}”?" title="Remove this saved query">✕</button>
+          </li>
+          {% endfor %}
+        </ul>
+        {% endif %}
         <div class="card-actions items-center justify-between">
-          <a href="{% url 'my_insights:dataset' dataset.dataset_id %}" class="btn btn-sm" title="See each column's type, blanks and examples">Open profile</a>
+          <div class="flex flex-wrap gap-2">
+            <a href="{% url 'my_insights:dataset' dataset.dataset_id %}" class="btn btn-sm" title="See each column's type, blanks and examples">Open profile</a>
+            <a href="{% url 'my_insights:query' %}?dataset={{ dataset.dataset_id }}" class="btn btn-sm btn-primary btn-soft" title="Ask a question of this data, e.g. Sum of Amount by Month">New query</a>
+          </div>
           <button type="button" class="btn btn-sm btn-ghost text-error"
                   hx-post="{% url 'my_insights:dataset_remove' dataset.dataset_id %}" hx-target="#workspace-panel" hx-swap="outerHTML"
                   hx-confirm="{{ card.remove_confirm }}" title="Remove this dataset from memory">Remove</button>

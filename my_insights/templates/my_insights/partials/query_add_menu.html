@@ -1,0 +1,18 @@
+{% comment %}The "+ Add" menu of a box: every field that can go there. Needs zone (group | value | filter).{% endcomment %}
+<div class="dropdown dropdown-end">
+  <div tabindex="0" role="button" class="btn btn-ghost btn-xs" title="{{ title }}">+ Add</div>
+  <ul tabindex="0" class="menu dropdown-content menu-sm z-30 mt-1 max-h-72 w-64 flex-nowrap overflow-y-auto rounded-box border border-base-300 bg-base-100 p-2 shadow-lg">
+    {% if zone == "value" %}
+    <li><button type="submit" name="action" value="add_value:*" title="How many rows in each group">∑ Count of rows</button></li>
+    {% endif %}
+    {% for f in fields %}{% if not f.info.error %}{% if zone == "value" or not f.values_only %}
+    <li><button type="submit" name="action" value="add_{{ zone }}:{{ f.info.name }}" title="{{ f.kind_label }}"><span class="w-6 text-center text-base-content/60">{{ f.icon }}</span>{{ f.info.name }}</button></li>
+    {% endif %}{% endif %}{% endfor %}
+    {% if zone == "filter" and value_targets %}
+    <li class="menu-title">Totals of values</li>
+    {% for key, label in value_targets %}
+    <li><button type="submit" name="action" value="add_total_filter:{{ key }}" title="Keep only groups whose {{ label }} passes a test, e.g. more than 1,00,000">∑ {{ label }}</button></li>
+    {% endfor %}
+    {% endif %}
+  </ul>
+</div>

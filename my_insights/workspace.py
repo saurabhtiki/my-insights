@@ -62,6 +62,71 @@ class LinkSpec:
 
 
 @dataclass
+class CalculatedField:
+    """A column made from a formula, e.g. Profit = [Sales] - [Cost]. Belongs to a dataset."""
+
+    name: str
+    formula: str
+
+
+@dataclass
+class GroupItem:
+    """One field in the Group by box. `date_part` (month, fy…) is used for date fields."""
+
+    key: str
+    column: str  # a column or calculated field
+    date_part: str = ""
+
+
+@dataclass
+class ValueItem:
+    """One entry in the Values box, e.g. Sum of Amount."""
+
+    key: str
+    column: str  # a column or calculated field; "*" = Count of rows
+    agg: str  # sum | avg | median | count | count_unique | min | max | rows | formula
+    label: str = ""  # the user's own name for it, e.g. "Revenue"
+    number_format: str = ""  # "0" / "1" / "2" decimals, "r0" / "r2" with ₹; "" = default
+
+
+@dataclass
+class FilterItem:
+    """One filter. On a field (row filter) or on a value's total (`value_key` set)."""
+
+    key: str
+    column: str = ""
+    value_key: str = ""
+    op: str = ""
+    values: list[str] = field(default_factory=list)
+
+
+@dataclass
+class SortItem:
+    key: str
+    target: str  # a group's or value's key
+    descending: bool = False
+
+
+@dataclass
+class QuerySpec:
+    """A question asked of one dataset. Holds no data."""
+
+    dataset_id: int
+    groups: list[GroupItem] = field(default_factory=list)
+    values: list[ValueItem] = field(default_factory=list)
+    filters: list[FilterItem] = field(default_factory=list)
+    sorts: list[SortItem] = field(default_factory=list)
+    top_n: int | None = None
+
+
+@dataclass
+class SavedQuery:
+    query_id: int
+    name: str
+    spec: QuerySpec
+
+
+@dataclass
 class Dataset:
     dataset_id: int
     name: str
@@ -70,6 +135,7 @@ class Dataset:
     row_count: int
     columns: list[ColumnProfile]
     link: LinkSpec | None = None  # set for a combined dataset
+    calculated: list[CalculatedField] = field(default_factory=list)
 
     @property
     def flagged_count(self) -> int:
@@ -94,12 +160,28 @@ class Workspace:
         # The link screens' latest checks, for their preview tables: {draft id: LinkCheck}.
         # One per open link screen, so two browser tabs don't mix up their previews.
         self.link_drafts: dict = {}
-        self.suggestion_cache: tuple = ((), [])  # (dataset ids it was made for, suggestions)
+        self.suggestion_cache: tuple = ((), [])
+        self.queries: dict[int, SavedQuery] = {}
+        self._next_query_id = 1
+        # The query screens' latest questions, for their result tables: {draft id: QuerySpec}.
+        self.query_drafts: dict = {}
+        # The latest result shown: (draft id, spec, plan, rows), so sort / page clicks in its
+        # table don't run the query again.
+        self.query_result_cache: tuple | None = None  # (dataset ids it was made for, suggestions)
 
     def new_dataset_id(self) -> int:
         dataset_id = self._next_id
         self._next_id += 1
         return dataset_id
+
+    def new_query_id(self) -> int:
+        query_id = self._next_query_id
+        self._next_query_id += 1
+        return query_id
+
+    def queries_of(self, dataset_ids) -> list[SavedQuery]:
+        ids = set(dataset_ids)
+        return [query for query in self.queries.values() if query.spec.dataset_id in ids]
 
     def unique_name(self, wanted: str, ignore_id: int | None = None) -> str:
         taken = {
@@ -142,14 +224,19 @@ class Workspace:
         return list(ordered.values())
 
     def remove_dataset(self, dataset_id: int) -> list[str]:
-        """Remove a dataset and every combined dataset built on it. Returns the names removed."""
+        """Remove a dataset, every combined dataset built on it and their queries.
+        Returns the names removed."""
         removed = [*reversed(self.dependants(dataset_id)), self.datasets[dataset_id]]
+        queries = self.queries_of(dataset.dataset_id for dataset in removed)
+        self.query_result_cache = None
+        for query in queries:
+            del self.queries[query.query_id]
         for dataset in removed:
             kind = "VIEW" if dataset.link else "TABLE"
             self.connection.execute(f'DROP {kind} IF EXISTS "{dataset.table_name}"')
             del self.datasets[dataset.dataset_id]
         self.refresh_memory()
-        return [dataset.name for dataset in removed]
+        return [dataset.name for dataset in removed] + [query.name for query in queries]
 
     def refresh_memory(self) -> None:
         """Re-measure this database's memory. Call while holding `lock`."""
