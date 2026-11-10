@@ -1,0 +1,6 @@
+{% load my_insights %}
+<tr>
+  {% for column in table.columns %}
+  <td class="{% if column.align_right %}text-right tabular-nums{% endif %} max-w-xs truncate">{{ row|cell:column.name }}</td>
+  {% endfor %}
+</tr>

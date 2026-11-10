@@ -1,0 +1,58 @@
+{% extends base_template %}
+{% block title %}My Insights{% endblock %}
+{% block content %}
+{% include "my_insights/partials/idle_script.html" %}
+<div class="space-y-6" hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
+  {% with heading="Your data" subheading="Upload CSV or Excel files to see what is inside. Data stays in memory only and is never saved." %}
+    {% include "my_insights/partials/top_bar.html" %}
+  {% endwith %}
+
+  {% if expired %}
+  <div role="alert" class="alert alert-soft alert-info">
+    <span>Your earlier data was cleared after {{ idle_clear_minutes }} minutes of no activity. Upload the files again to continue.</span>
+  </div>
+  {% endif %}
+
+  <form id="upload-form" class="card card-border bg-base-100" method="post" action="{% url 'my_insights:upload' %}"
+        enctype="multipart/form-data"
+        hx-post="{% url 'my_insights:upload' %}" hx-encoding="multipart/form-data"
+        hx-target="#workspace-panel" hx-swap="outerHTML" hx-disabled-elt="find button[type=submit]"
+        x-data="{ dragging: false, picked: [], maxBytes: {{ max_file_mb }} * 1048576,
+                  pick(list) { this.picked = [...list].map(f => ({ name: f.name, mb: (f.size / 1048576).toFixed(1), big: f.size > this.maxBytes })) } }"
+        @htmx:after-request="if ($event.detail.elt === $el) { $el.reset(); picked = [] }">
+    {% csrf_token %}
+    <div class="card-body gap-4">
+      <label for="insights-files"
+             class="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-box border-2 border-dashed px-6 py-10 text-center transition-colors"
+             :class="dragging ? 'border-primary bg-primary/5' : 'border-base-300 hover:border-primary/60'"
+             @dragover.prevent="dragging = true" @dragleave.prevent="dragging = false"
+             @drop.prevent="dragging = false; $refs.files.files = $event.dataTransfer.files; pick($refs.files.files)">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-10 text-primary/70"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5"/></svg>
+        <span class="font-medium">Drop files here, or click to choose</span>
+        <span class="text-sm text-base-content/60">CSV, XLSX or XLSM · up to {{ max_file_mb }} MB each · {{ max_files }} files at a time</span>
+        <input id="insights-files" x-ref="files" type="file" name="files" multiple accept=".csv,.xlsx,.xlsm" class="sr-only"
+               @change="pick($event.target.files)">
+      </label>
+
+      <ul x-show="picked.length" x-cloak class="flex flex-wrap gap-2">
+        <template x-for="file in picked" :key="file.name">
+          <li class="badge badge-lg gap-1" :class="file.big ? 'badge-error badge-soft' : 'badge-ghost'"
+              :title="file.big ? 'Larger than {{ max_file_mb }} MB, so this file will be refused' : 'Ready to upload'">
+            <span x-text="file.name"></span><span class="opacity-60" x-text="file.mb + ' MB'"></span>
+          </li>
+        </template>
+      </ul>
+
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <p class="text-xs text-base-content/60">Each Excel sheet becomes its own dataset. Spaces are trimmed and blank rows skipped automatically.</p>
+        <button type="submit" class="btn btn-primary" :disabled="!picked.length"
+                title="Read the files and show what each column contains">
+          <span class="loading loading-spinner loading-sm htmx-indicator"></span>
+          Upload &amp; profile
+        </button>
+      </div>
+    </div>
+  </form>
+
+  {% include "my_insights/partials/workspace_panel.html" %}</div>
+{% endblock %}

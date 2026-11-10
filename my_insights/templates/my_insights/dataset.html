@@ -1,0 +1,65 @@
+{% extends base_template %}
+{% load humanize %}
+{% block title %}{{ dataset.name }}{% endblock %}
+{% block content %}
+{% include "my_insights/partials/idle_script.html" %}
+<div class="space-y-6" hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
+  <div class="breadcrumbs text-sm">
+    <ul>
+      <li><a href="{% url 'my_insights:home' %}" title="Back to all your uploaded data">Your data</a></li>
+      <li>{{ dataset.name }}</li>
+    </ul>
+  </div>
+
+  {% with heading=dataset.name subheading="From "|add:dataset.source_file %}
+    {% include "my_insights/partials/top_bar.html" %}
+  {% endwith %}
+
+  <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+    <div class="stats stats-horizontal border border-base-300 bg-base-100">
+      <div class="stat py-3">
+        <div class="stat-title">Rows</div>
+        <div class="stat-value text-2xl tabular-nums">{{ dataset.row_count|intcomma }}</div>
+      </div>
+      <div class="stat py-3">
+        <div class="stat-title">Columns</div>
+        <div class="stat-value text-2xl tabular-nums">{{ dataset.columns|length }}</div>
+      </div>
+      <div class="stat py-3" title="Columns with some values that don't match the rest (kept as text)">
+        <div class="stat-title">To check</div>
+        <div class="stat-value text-2xl tabular-nums {% if dataset.flagged_count %}text-warning{% endif %}">{{ dataset.flagged_count }}</div>
+      </div>
+    </div>
+
+    <div class="flex flex-wrap items-start gap-2" x-data="{ renaming: {{ rename_error|yesno:'true,false' }} }">
+      <form x-show="renaming" x-cloak method="post" action="{% url 'my_insights:dataset_rename' dataset.dataset_id %}" class="flex flex-col gap-1">
+        {% csrf_token %}
+        <div class="join">
+          <input name="name" value="{{ dataset.name }}" maxlength="100" required aria-label="New dataset name"
+                 class="input input-sm join-item {% if rename_error %}input-error{% endif %}" x-ref="name"
+                 x-effect="renaming && $nextTick(() => $refs.name.select())">
+          <button class="btn btn-sm btn-primary join-item" title="Save the new name">Save</button>
+          <button type="button" class="btn btn-sm join-item" @click="renaming = false" title="Keep the current name">Cancel</button>
+        </div>
+        {% if rename_error %}<p class="text-sm text-error">{{ rename_error }}</p>{% endif %}
+      </form>
+      <button x-show="!renaming" type="button" class="btn btn-sm" @click="renaming = true" title="Give this dataset a clearer name">Rename</button>
+      <form x-show="!renaming" method="post" action="{% url 'my_insights:dataset_remove' dataset.dataset_id %}"
+            onsubmit="return confirm('Remove this dataset from memory?')">
+        {% csrf_token %}
+        <button class="btn btn-sm btn-ghost text-error" title="Remove this dataset from memory">Remove</button>
+      </form>
+    </div>
+  </div>
+
+  <div role="tablist" class="tabs tabs-border">
+    <a role="tab" href="?view=columns" class="tab {% if view == 'columns' %}tab-active{% endif %}"
+       title="One line per column: its type, how many cells are blank, and examples">Columns</a>
+    <a role="tab" href="?view=rows" class="tab {% if view == 'rows' %}tab-active{% endif %}"
+       title="The first {{ preview_rows }} rows, as they were read">First {{ preview_rows }} rows</a>
+  </div>
+
+  {% include "my_insights/partials/dataset_table.html" %}
+  {% include "my_insights/partials/idle_watch.html" %}
+</div>
+{% endblock %}

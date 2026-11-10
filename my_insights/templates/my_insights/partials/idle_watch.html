@@ -1,0 +1,14 @@
+{% comment %}Warns before idle data is wiped. Any htmx request or "Keep my data" restarts the clock.
+Needs idle_script.html on the page first (it defines myInsightsIdle).{% endcomment %}
+<div x-data="myInsightsIdle({{ idle_warn_seconds }}, {{ idle_clear_seconds }})" x-init="start()"
+     @htmx:after-request.window="reset()" class="toast toast-end toast-bottom z-50">
+  <div x-show="warning" x-cloak role="alert" class="alert alert-warning shadow-lg">
+    <span>No activity for a while. Your data will be cleared in <b x-text="left"></b>.</span>
+    <button type="button" class="btn btn-sm" hx-post="{% url 'my_insights:keep_alive' %}" hx-swap="none"
+            title="Keep your uploaded data for another {{ idle_clear_minutes }} minutes">Keep my data</button>
+  </div>
+  <div x-show="cleared" x-cloak role="alert" class="alert alert-info shadow-lg">
+    <span>Your data was cleared after {{ idle_clear_minutes }} minutes of no activity.</span>
+    <a href="{% url 'my_insights:home' %}" class="btn btn-sm">Start again</a>
+  </div>
+</div>

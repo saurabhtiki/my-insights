@@ -1,0 +1,23 @@
+<div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+  <div class="min-w-0">
+    <p class="text-xs font-semibold uppercase tracking-widest text-primary">My Insights</p>
+    <h1 class="truncate text-2xl font-bold tracking-tight">{{ heading }}</h1>
+    <p class="text-sm text-base-content/60">{{ subheading }}</p>
+  </div>
+  <div class="flex shrink-0 items-center gap-2">
+    <span class="tooltip tooltip-bottom" data-tip="Memory your data uses on the server right now (limit {{ my_memory_limit_mb }} MB). It is never saved to disk.">
+      <span class="badge badge-ghost cursor-help gap-1">{{ my_memory_mb }} MB in memory</span>
+    </span>
+    {% if datasets %}
+    <form method="post" action="{% url 'my_insights:clear' %}" onsubmit="return confirm('Remove all your uploaded data from the server now?')">
+      {% csrf_token %}
+      <button class="btn btn-sm btn-ghost text-error" title="Remove all your uploaded data from the server memory now">Clear my data</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+{% if memory.warn %}
+<div role="alert" class="alert alert-soft alert-warning mt-4">
+  <span>The server's memory is {{ memory.percent }}% full. {% if memory.busy %}New uploads are paused for a few minutes.{% else %}Large uploads may be refused for a while.{% endif %}</span>
+</div>
+{% endif %}

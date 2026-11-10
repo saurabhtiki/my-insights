@@ -1,0 +1,5 @@
+{% if view == "rows" %}
+  {% include "django_datatable/list_table.html" with row_template="my_insights/partials/data_row.html" empty_text="This dataset has no rows." %}
+{% else %}
+  {% include "django_datatable/list_table.html" with row_template="my_insights/partials/profile_row.html" empty_text="This dataset has no columns." %}
+{% endif %}

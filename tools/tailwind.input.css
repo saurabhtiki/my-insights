@@ -1,0 +1,40 @@
+/* Source for static/css/tailwind.css (demo site). Rebuild after changing classes:
+   .\tools\build_css.ps1
+   Tailwind keeps only the class names it finds in the folders below. A host app using
+   My Insights must add its own @source line for my_insights/templates. */
+@import "tailwindcss" source(none);
+@source "../demo/templates";
+@source "../my_insights/templates";
+@source "../.venv/Lib/site-packages/django_datatable/templates";
+@plugin "./daisyui.mjs" {
+  themes: false;
+}
+@plugin "./daisyui-theme.mjs" {
+  name: "insights";
+  default: true;
+  color-scheme: light;
+  --color-base-100: oklch(99.5% 0.003 250);
+  --color-base-200: oklch(97% 0.006 250);
+  --color-base-300: oklch(91% 0.01 250);
+  --color-base-content: oklch(25% 0.03 255);
+  --color-primary: oklch(52% 0.16 255);
+  --color-primary-content: oklch(98% 0.01 255);
+  --color-secondary: oklch(60% 0.12 190);
+  --color-secondary-content: oklch(98% 0.01 190);
+  --color-accent: oklch(70% 0.15 60);
+  --color-accent-content: oklch(22% 0.03 60);
+  --color-neutral: oklch(32% 0.03 255);
+  --color-neutral-content: oklch(97% 0.01 255);
+  --color-info: oklch(62% 0.13 235);
+  --color-info-content: oklch(98% 0.01 235);
+  --color-success: oklch(60% 0.14 155);
+  --color-success-content: oklch(98% 0.01 155);
+  --color-warning: oklch(75% 0.15 75);
+  --color-warning-content: oklch(25% 0.05 75);
+  --color-error: oklch(58% 0.2 25);
+  --color-error-content: oklch(98% 0.01 25);
+  --radius-selector: 0.5rem;
+  --radius-field: 0.5rem;
+  --radius-box: 0.75rem;
+  --border: 1px;
+}

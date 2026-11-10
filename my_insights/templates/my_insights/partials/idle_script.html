@@ -1,0 +1,19 @@
+{% comment %}The idle timer used by idle_watch.html. A plain (not deferred) script, so it exists
+before Alpine starts and before htmx swaps in a panel that uses it.{% endcomment %}
+<script>
+  window.myInsightsIdle = window.myInsightsIdle || function (warnAt, clearAt) {
+    return {
+      warning: false, cleared: false, left: "", startedAt: Date.now(), timer: null,
+      start() { this.timer = setInterval(() => this.tick(), 1000); },
+      destroy() { clearInterval(this.timer); },  // Alpine calls this when htmx replaces the panel
+      reset() { if (!this.cleared) { this.startedAt = Date.now(); this.warning = false; } },
+      tick() {
+        const idle = (Date.now() - this.startedAt) / 1000;
+        if (idle >= clearAt + 5) { clearInterval(this.timer); this.cleared = true; this.warning = false; return; }
+        this.warning = idle >= warnAt;
+        const secs = Math.max(0, Math.ceil(clearAt - idle));
+        this.left = Math.floor(secs / 60) + ":" + String(secs % 60).padStart(2, "0");
+      },
+    };
+  };
+</script>

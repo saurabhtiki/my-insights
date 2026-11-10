@@ -1,0 +1,50 @@
+{% load humanize %}
+<section id="workspace-panel" class="space-y-4">
+  {% if results %}
+  <div class="space-y-2">
+    {% for result in results %}
+    <div role="alert" class="alert alert-soft {% if result.ok %}alert-success{% else %}alert-error{% endif %} items-start">
+      <span class="font-semibold">{% if result.ok %}Loaded{% else %}Not loaded{% endif %}</span>
+      <div>{% if result.file %}<b>{{ result.file }}</b> · {% endif %}{{ result.message }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if datasets %}
+  <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+    {% for dataset in datasets %}
+    <article class="card card-border bg-base-100 transition-shadow hover:shadow-md">
+      <div class="card-body gap-3">
+        <div class="flex items-start justify-between gap-2">
+          <div class="min-w-0">
+            <h2 class="card-title truncate text-base" title="{{ dataset.name }}">{{ dataset.name }}</h2>
+            <p class="truncate text-xs text-base-content/60" title="Loaded from {{ dataset.source_file }}">{{ dataset.source_file }}</p>
+          </div>
+          {% if dataset.flagged_count %}
+          <span class="tooltip tooltip-left" data-tip="{{ dataset.flagged_count }} column{{ dataset.flagged_count|pluralize }} mostly hold one type (like numbers) but have some odd values, so they were kept as text. Open the profile to see them.">
+            <span class="badge badge-warning badge-soft badge-sm cursor-help">{{ dataset.flagged_count }} to check</span>
+          </span>
+          {% endif %}
+        </div>
+        <div class="flex gap-6 text-sm">
+          <div><div class="text-lg font-semibold tabular-nums">{{ dataset.row_count|intcomma }}</div><div class="text-base-content/60">rows</div></div>
+          <div><div class="text-lg font-semibold tabular-nums">{{ dataset.columns|length }}</div><div class="text-base-content/60">columns</div></div>
+        </div>
+        <div class="card-actions items-center justify-between">
+          <a href="{% url 'my_insights:dataset' dataset.dataset_id %}" class="btn btn-sm" title="See each column's type, blanks and examples">Open profile</a>
+          <button type="button" class="btn btn-sm btn-ghost text-error"
+                  hx-post="{% url 'my_insights:dataset_remove' dataset.dataset_id %}" hx-target="#workspace-panel" hx-swap="outerHTML"
+                  hx-confirm="Remove “{{ dataset.name }}” from memory?" title="Remove this dataset from memory">Remove</button>
+        </div>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+  {% include "my_insights/partials/idle_watch.html" %}
+  {% elif not results %}
+  <div class="rounded-box border border-dashed border-base-300 p-8 text-center text-sm text-base-content/60">
+    No data yet. Upload a file above. Example: a stock list with columns like <i>Item Code, Qty, Rate, Date</i>.
+  </div>
+  {% endif %}
+</section>

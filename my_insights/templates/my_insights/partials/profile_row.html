@@ -1,0 +1,29 @@
+{% load humanize %}
+<tr>
+  <td class="font-medium">{{ row.name }}</td>
+  <td>
+    <span class="tooltip tooltip-right" data-tip="{{ row.kind_help }}{% if row.date_format %} Read as {{ row.date_format }}.{% endif %}">
+      <span class="badge badge-sm badge-ghost cursor-help">{{ row.kind }}</span>
+    </span>
+    {% if row.date_format %}<span class="ml-1 text-xs text-base-content/60">{{ row.date_format }}</span>{% endif %}
+  </td>
+  <td class="text-right tabular-nums">
+    {% if row.blanks %}
+      <span title="{{ row.blank_percent }}% of rows have no value in this column">{{ row.blanks|intcomma }}</span>
+    {% else %}<span class="text-base-content/40" title="Every row has a value">0</span>{% endif %}
+  </td>
+  <td class="max-w-xs truncate text-base-content/70" title="{{ row.samples }}">{{ row.samples|default:"—" }}</td>
+  <td>
+    {% if row.check == "Needs a look" %}
+      <span class="tooltip tooltip-left" data-tip="{{ row.note }} Odd values: {{ row.mixed_examples|join:', ' }}. Fix them in the file and upload again to get the right type.">
+        <span class="badge badge-sm badge-warning badge-soft cursor-help">Needs a look</span>
+      </span>
+    {% elif row.check == "Note" %}
+      <span class="tooltip tooltip-left" data-tip="{{ row.note }}">
+        <span class="badge badge-sm badge-info badge-soft cursor-help">Note</span>
+      </span>
+    {% else %}
+      <span class="badge badge-sm badge-success badge-soft" title="Every value fits the column's type">OK</span>
+    {% endif %}
+  </td>
+</tr>

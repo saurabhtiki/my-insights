@@ -1,0 +1,19 @@
+{% comment %}Fallback page frame, used only when the host sets no MY_INSIGHTS["BASE_TEMPLATE"].
+Loads the libraries from a CDN. Hosts should point BASE_TEMPLATE at their own base.html.{% endcomment %}
+{% load static %}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{% endblock %} · My Insights</title>
+  <link href="https://cdn.jsdelivr.net/npm/daisyui@5.0.43/daisyui.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.1.11"></script>
+  <script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.6/dist/htmx.min.js"></script>
+  <link href="{% static 'django_datatable/datatable.css' %}" rel="stylesheet">
+  <script defer src="{% static 'django_datatable/datatable.js' %}"></script>
+  {% block extra_head %}{% endblock %}
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.9/dist/cdn.min.js"></script>
+  <style>[x-cloak]{display:none!important}</style>
+</head>
+<body class="min-h-screen bg-base-200"><main class="mx-auto max-w-7xl p-4 sm:p-6">{% block content %}{% endblock %}</main></body>
+</html>
