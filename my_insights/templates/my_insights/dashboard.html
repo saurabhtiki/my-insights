@@ -36,6 +36,12 @@
               title="Add a chart, table, KPI number or note">＋ Add tile</button>
       <a href="{% url 'my_insights:dashboard' dashboard.dashboard_id %}" class="btn btn-primary btn-sm" title="Leave Edit mode and see the dashboard">Done</a>
       {% else %}
+      <form method="post" action="{% url 'my_insights:dashboard_export' dashboard.dashboard_id %}" x-data
+            @submit="$el.querySelector('[name=clicks]').value = dashboardClicks()">
+        {% csrf_token %}<input type="hidden" name="clicks" value="[]">
+        <button class="btn btn-sm" {% if not tiles %}disabled{% endif %}
+                title="Download this dashboard as one HTML file, as it looks now (filters and clicks included). Anyone can open it in a browser; the charts need the internet.">⤓ HTML</button>
+      </form>
       <a href="?edit=1" class="btn btn-sm" title="Add, move, resize or remove tiles">✎ Edit</a>
       {% endif %}
     </div>

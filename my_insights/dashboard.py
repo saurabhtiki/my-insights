@@ -334,15 +334,15 @@ def _add_filters(spec, catalog, wanted, view: TileView) -> None:
             view.skipped.append(text)
 
 
-def build_tile(workspace, dashboard, tile, fields, clicks, today=None) -> TileView:
-    """Everything one tile shows, with the dashboard's filters and the page's clicks."""
-    view = TileView(tile)
+def tile_query(workspace, dashboard, tile, fields, clicks, view: TileView):
+    """(query with the dashboard's filters and the page's clicks added, dataset, catalog), or
+    None when the tile has no query or its source is gone (view.problem says why)."""
     if tile.kind == "note":
-        return view
+        return None
     source = tile_source(workspace, tile)
     view.name, view.problem = source.name, source.problem
     if source.problem:
-        return view
+        return None
     dataset = source.dataset
     catalog = querying.field_catalog(dataset)
     spec = copy.deepcopy(source.spec)
@@ -357,6 +357,16 @@ def build_tile(workspace, dashboard, tile, fields, clicks, today=None) -> TileVi
             if made is not None:
                 wanted.append((made, click.kind))
     _add_filters(spec, catalog, wanted, view)
+    return spec, dataset, catalog
+
+
+def build_tile(workspace, dashboard, tile, fields, clicks, today=None) -> TileView:
+    """Everything one tile shows, with the dashboard's filters and the page's clicks."""
+    view = TileView(tile)
+    found = tile_query(workspace, dashboard, tile, fields, clicks, view)
+    if found is None:
+        return view
+    spec, dataset, catalog = found
 
     if tile.kind == "kpi":
         _kpi(workspace, tile, spec, dataset, catalog, view, today)

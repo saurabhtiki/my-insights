@@ -664,25 +664,28 @@ def _fetch(connection, sql: str, params: list) -> list[tuple]:
         ) from error
 
 
-def run_query(connection, plan: QueryPlan, top_n: int | None = None) -> QueryResult:
-    """Run a planned query. With an Across field, the result is spread into columns."""
+def run_query(
+    connection, plan: QueryPlan, top_n: int | None = None, cap: int | None = None
+) -> QueryResult:
+    """Run a planned query. With an Across field, the result is spread into columns.
+    `cap`: the most rows to keep (default: the preview cap). Plan with the same cap."""
     records = _fetch(connection, plan.sql, plan.params)
     totals = None
     if plan.total_sql:
         total_record = _fetch(connection, plan.total_sql, plan.total_params)[0]
         value_keys = [column.key for column in plan.columns if column.is_value]
         totals = dict(zip(value_keys, total_record, strict=True))
-    cap = row_cap()
+    cap = cap or row_cap()
     truncated = not top_n and len(records) > cap
     keys = [column.key for column in plan.columns]
     rows = [dict(zip(keys, record, strict=True)) for record in records[:cap]]
     result = QueryResult(rows, totals, truncated, list(plan.columns))
     if plan.across is not None:
-        _spread_across(connection, plan, result)
+        _spread_across(connection, plan, result, cap)
     return result
 
 
-def _spread_across(connection, plan: QueryPlan, result: QueryResult) -> None:
+def _spread_across(connection, plan: QueryPlan, result: QueryResult, cap: int) -> None:
     """Across: one column per across value and value field, plus a Total column per value,
     e.g. Branch | Apr 2026 | May 2026 | Total. Every total is asked of DuckDB (not added up
     here), so an Average's total is the average of the rows, not of the cells."""
@@ -691,9 +694,9 @@ def _spread_across(connection, plan: QueryPlan, result: QueryResult) -> None:
     across_totals = _fetch(connection, plan.across_total_sql, plan.across_total_params)
     cells = _fetch(connection, plan.cell_sql, plan.cell_params)
     count = len(group_columns)
-    if len(cells) > row_cap():
+    if len(cells) > cap:
         result.truncated = True
-        cells = cells[: row_cap()]
+        cells = cells[:cap]
     found = {(record[:count], record[count]): record[count + 1 :] for record in cells}
     long_keys = [*(column.key for column in group_columns), f"g{count}"]
     long_keys += [column.key for column in value_columns]

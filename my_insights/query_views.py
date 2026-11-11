@@ -274,6 +274,11 @@ def query(request):
             logger.info("Query name refused: %s", name_problem)
         if plan.problems:
             logger.info("Query problems shown: %s", plan.problems)
+        saved = workspace.queries.get(query_id) if query_id else None
+        # Not saved = differs from the saved copy. Just switching tabs or sorting changes nothing.
+        dirty = request.method == "POST" and (
+            saved is None or spec != saved.spec or bool(name and name != saved.name)
+        )
 
         context = page_context(
             request,
@@ -291,13 +296,13 @@ def query(request):
             suggested_chart=suggested_chart,
             draft_id=draft_id,
             query_id=query_id,
-            saved=workspace.queries.get(query_id) if query_id else None,
+            saved=saved,
             name=name,
             suggested_name=suggested_name,
             name_problem=name_problem,
             notice=notice or _saved_notice(request.GET),
             problem_notice=_take_notice(workspace),
-            dirty=request.method == "POST",  # a saved query leaves through the redirect above
+            dirty=dirty,
             formula=formula,
         )
     if is_htmx:

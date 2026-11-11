@@ -1,8 +1,9 @@
 {% comment %}
 Draws charts with ECharts (loaded by the page). Used by the query screen and dashboards.
-insightChart(optionId, fileName, clickId, tileId): the option JSON comes from
+insightChart(optionId, fileName, clickId, tileId, pickedId): the option JSON comes from
 charting.build_chart. With clickId (dashboards), a click on a bar / slice / point sets a
-click filter in the "dash" store, which reloads the other tiles.
+click filter in the "dash" store, which reloads the other tiles. pickedId (saved dashboard
+file): the labels of this chart's own click, shown bright with the rest faded.
 {% endcomment %}
 <script>
   // ---- charts: numbers in Indian style (12,34,567 · ₹ 1.2 Cr), like the result table ----
@@ -78,7 +79,25 @@ click filter in the "dash" store, which reloads the other tiles.
     if (meta.series) add(meta.series, meta.scatter ? p.seriesName : series._series);
     return items;
   }
-  function insightChart(optionId, fileName, clickId, tileId) {
+  // A saved dashboard file has no clicking: the bar / slice that was clicked stays bright and
+  // the rest of the chart is faded. labels = the click's labels joined, e.g. "Branch = Delhi".
+  function fadeUnpicked(meta, option, labels) {
+    const axes = [].concat(option.xAxis || [], option.yAxis || []);
+    const axis = axes.find((a) => a && a.type === "category" && Array.isArray(a.data));
+    const names = axis ? axis.data : [];
+    const plain = (item) => (item && typeof item === "object" && !Array.isArray(item) ? item : { value: item });
+    const isPicked = (series, seriesIndex, item, dataIndex) => {
+      const p = { seriesIndex, dataIndex, seriesName: series.name, name: plain(item).name ?? names[dataIndex], value: plain(item).value };
+      return chartClickItems(meta, option, p).map((x) => x.label).join("|") === labels;
+    };
+    const series = option.series || [];
+    if (!series.some((s, si) => (s.data || []).some((item, di) => isPicked(s, si, item, di)))) return;
+    series.forEach((s, si) => {
+      s.data = (s.data || []).map((item, di) => isPicked(s, si, item, di) ? item
+        : { ...plain(item), itemStyle: { ...plain(item).itemStyle, opacity: 0.3 } });
+    });
+  }
+  function insightChart(optionId, fileName, clickId, tileId, pickedId) {
     let chart = null;
     let watcher = null;
     let picked = null;  // {seriesIndex, dataIndex} highlighted by this chart's click filter
@@ -95,10 +114,14 @@ click filter in the "dash" store, which reloads the other tiles.
         if (option.legend) option.legend.textStyle = { color: style.color };
         const clickSource = clickId && document.getElementById(clickId);
         const meta = clickSource ? JSON.parse(clickSource.textContent) : null;
-        if (meta && meta.x) (option.series || []).forEach((series) => { series.selectedMode = "single"; });
+        const clickable = Boolean(meta && meta.x && window.Alpine && Alpine.store("dash"));
+        if (clickable) (option.series || []).forEach((series) => { series.selectedMode = "single"; });
+        const pickedSource = pickedId && document.getElementById(pickedId);
+        const pickedLabels = pickedSource ? JSON.parse(pickedSource.textContent) : [];
+        if (meta && meta.x && pickedLabels.length) fadeUnpicked(meta, option, pickedLabels.join("|"));
         chart = echarts.init(this.$el, null, { renderer: "canvas" });
         chart.setOption(option);
-        if (meta && meta.x && window.Alpine) {
+        if (clickable) {
           this.$el.style.cursor = "pointer";
           chart.on("click", (p) => {
             if (p.componentType !== "series") return;

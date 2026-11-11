@@ -1,0 +1,15 @@
+{% comment %}
+"⤓ Export ▾": CSV or Excel of the answer. Needs csv_url and xlsx_url. With with_clicks, the
+dashboard's click filters are added when the link is clicked (a Table tile exports what it shows).
+{% endcomment %}
+<div class="dropdown dropdown-end" {% if with_clicks %}x-data{% endif %}>
+  <div tabindex="0" role="button" class="btn {{ button_class|default:'btn-sm' }}" title="Download every row of this answer as a file (not only this page of the table)">⤓ Export ▾</div>
+  <ul tabindex="0" class="menu dropdown-content menu-sm z-30 mt-1 w-64 rounded-box border border-base-300 bg-base-100 p-2 shadow-lg">
+    <li><a href="{{ xlsx_url }}" {% if with_clicks %}@click="$el.href = '{{ xlsx_url }}?clicks=' + encodeURIComponent(dashboardClicks())"{% endif %}
+           title="Excel file: real numbers and dates (they add up in Excel), a Total row and an About sheet with the filters used">
+      <span class="font-medium">Excel (.xlsx)</span><span class="text-xs text-base-content/60">for working in Excel</span></a></li>
+    <li><a href="{{ csv_url }}" {% if with_clicks %}@click="$el.href = '{{ csv_url }}?clicks=' + encodeURIComponent(dashboardClicks())"{% endif %}
+           title="CSV file: plain rows that open anywhere. Best for very big answers">
+      <span class="font-medium">CSV (.csv)</span><span class="text-xs text-base-content/60">any size, opens anywhere</span></a></li>
+  </ul>
+</div>

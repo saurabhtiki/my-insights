@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import chart_views, dashboard_views, link_views, query_views, views
+from . import chart_views, dashboard_views, export_views, link_views, query_views, views
 
 app_name = "my_insights"
 
@@ -19,6 +19,11 @@ urlpatterns = [
     path("query/table/<str:draft_id>/", query_views.query_table, name="query_table"),
     path("query/formula-check/", query_views.formula_check, name="formula_check"),
     path("query/values/", query_views.filter_values, name="filter_values"),
+    path(
+        "query/export/<str:draft_id>/<str:fmt>/",
+        export_views.query_export,
+        name="query_export",
+    ),
     path(
         "query/<int:query_id>/as-dataset/",
         query_views.query_as_dataset,
@@ -59,5 +64,15 @@ urlpatterns = [
         "dashboard/<int:dashboard_id>/tile/<int:tile_id>/remove/",
         dashboard_views.tile_remove,
         name="tile_remove",
+    ),
+    path(
+        "dashboard/<int:dashboard_id>/tile/<int:tile_id>/export/<str:fmt>/",
+        export_views.tile_export,
+        name="tile_export",
+    ),
+    path(
+        "dashboard/<int:dashboard_id>/export/",
+        export_views.dashboard_export,
+        name="dashboard_export",
     ),
 ]

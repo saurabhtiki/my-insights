@@ -53,7 +53,11 @@ form; the answer names the fields that changed, so only their tiles reload.
             <div id="ticks-{{ key }}" class="max-h-60 overflow-y-auto">
               {% include "my_insights/partials/tick_list.html" with choices=f.choices %}
             </div>
-            <button type="submit" class="btn btn-primary btn-sm w-full" title="Use the ticked values">Apply</button>
+            <div class="flex gap-2">
+              <button type="submit" name="action" value="clear_filter:{{ key }}" class="btn btn-ghost btn-sm flex-1"
+                      title="Untick every value: this filter stays, but does nothing until you tick again">Clear</button>
+              <button type="submit" class="btn btn-primary btn-sm flex-1" title="Use the ticked values">Apply</button>
+            </div>
           </div>
         </div>
         {% elif f.item.op == "contains" %}

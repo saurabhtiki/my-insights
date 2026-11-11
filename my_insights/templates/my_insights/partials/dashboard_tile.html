@@ -8,8 +8,12 @@
   {% endif %}
   {% if view.name and not view.problem %}
   {% if tile.kind == "chart" %}
+  <button type="button" class="btn btn-ghost btn-xs" x-data @click="$dispatch('insights-chart-png', {tile: {{ tile.tile_id }}})"
+          title="Save this chart as a picture (PNG), as it looks now with the filters">⤓ PNG</button>
   <a href="{% url 'my_insights:query' %}?chart={{ tile.chart_id }}" class="btn btn-ghost btn-xs" title="Open this chart to change it">Open ↗</a>
   {% elif tile.kind == "table" %}
+  {% url 'my_insights:tile_export' dashboard.dashboard_id tile.tile_id 'csv' as csv_url %}{% url 'my_insights:tile_export' dashboard.dashboard_id tile.tile_id 'xlsx' as xlsx_url %}
+  {% include "my_insights/partials/export_menu.html" with csv_url=csv_url xlsx_url=xlsx_url with_clicks=True button_class='btn-ghost btn-xs' %}
   <a href="{% url 'my_insights:query' %}?open={{ tile.query_id }}" class="btn btn-ghost btn-xs" title="Open this query to change it">Open ↗</a>
   {% endif %}
   {% endif %}
@@ -37,6 +41,7 @@
 {{ view.click|json_script:click_id }}
 <div x-data="insightChart('{{ option_id }}', '{{ view.name|escapejs }}', '{{ click_id }}', {{ tile.tile_id }})"
      @insights-click-cleared.window="unpick($event)"
+     @insights-chart-png.window="$event.detail && $event.detail.tile === {{ tile.tile_id }} && downloadPng()"
      class="{% if tile.height == 'tall' %}h-[30rem]{% else %}h-72{% endif %} w-full min-w-0" role="img"
      aria-label="{{ view.name }}" title="Click a bar, slice or point to filter the other tiles. Click it again to clear."></div>
 

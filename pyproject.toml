@@ -10,6 +10,7 @@ dependencies = [
     "python-calamine>=0.3",
     "psutil>=6.0",
     "fsspec>=2026.9.0",
+    "xlsxwriter>=3.3.1",
 ]
 
 [dependency-groups]
@@ -17,10 +18,10 @@ dev = [
     "pytest>=8.3",
     "pytest-django>=4.9",
     "ruff>=0.8",
-    "openpyxl>=3.1",
     "python-dotenv>=1.0",
     "waitress>=3.0",
     "whitenoise>=6.8",
+    "openpyxl>=3.1.5",
 ]
 
 [build-system]

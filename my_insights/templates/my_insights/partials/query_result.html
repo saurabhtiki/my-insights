@@ -1,1 +1,4 @@
-{% include "django_datatable/list_table.html" with row_template="my_insights/partials/query_row.html" empty_text="No rows: nothing in the data passes these filters." %}
+{% comment %}The result table. Its own CSV button is hidden: "⤓ Export" downloads every row
+(the table holds only the preview rows).{% endcomment %}
+<style>.insights-no-csv .tooltip:has(> a[aria-label="Download CSV"]){display:none}</style>
+<div class="insights-no-csv">{% include "django_datatable/list_table.html" with row_template="my_insights/partials/query_row.html" empty_text="No rows: nothing in the data passes these filters." %}</div>

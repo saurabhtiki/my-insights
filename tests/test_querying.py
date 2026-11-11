@@ -700,3 +700,17 @@ def test_many_group_values_get_a_text_filter_and_tick_lists_load_on_open(client)
     # the result column gets a "contains" box, not 150 tick boxes
     assert '<input type="search" name="g0"' in page and 'name="g0" value="C7"' not in page
     assert page.count('name="f1_values"') == 1  # only the ticked value until the list is opened
+
+
+@pytest.mark.django_db
+def test_switching_tabs_on_a_saved_query_keeps_it_saved(client):
+    workspace, dataset = upload(client)
+    fields = {"groups": "g1", "g1_column": "Item", "name": "Items"}
+    post(client, dataset, action="save", **fields)
+    query_id = next(iter(workspace.queries))
+    for action in ("tab:chart", "tab:table"):
+        page = post(client, dataset, action=action, query_id=query_id, **fields).content.decode()
+        assert 'name="dirty" value="0"' in page and "Not saved" not in page
+    assert "▦ Add to dashboard ▾</div>" in page  # back on Table: the menu, not a grey button
+    page = post(client, dataset, action="add_group:Branch", query_id=query_id, **fields)
+    assert "Not saved" in page.content.decode()  # a real change still counts

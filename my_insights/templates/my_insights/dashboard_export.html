@@ -1,0 +1,129 @@
+{% comment %}
+A dashboard saved as one HTML file (export_views.dashboard_export). It stands alone: no
+links back to the app. Charts are drawn by ECharts from the internet, so hover works; the
+numbers, tables, KPIs and notes are in the file itself.
+{% endcomment %}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ dashboard.name }}</title>
+  <link href="https://cdn.jsdelivr.net/npm/daisyui@5.0.43/daisyui.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.1.11"></script>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.6.0/dist/echarts.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.9/dist/cdn.min.js"></script>
+  <style>
+    body { background: #f3f4f6; }
+    @media print { .no-print { display: none !important; } article { break-inside: avoid; } }
+  </style>
+</head>
+<body class="min-h-screen bg-base-200">
+<main class="mx-auto max-w-7xl space-y-5 p-4 sm:p-6">
+  <header class="space-y-2">
+    <p class="text-xs font-semibold uppercase tracking-widest text-primary">Dashboard</p>
+    <h1 class="text-2xl font-bold tracking-tight">{{ dashboard.name }}</h1>
+    <p class="text-sm text-base-content/60">Saved {{ exported|date:"d-m-Y H:i" }}. A snapshot: the numbers don't change. Hover a chart to see its values.</p>
+    {% if filters or clicked %}
+    <div class="flex flex-wrap items-center gap-2" aria-label="Filters">
+      <span class="text-sm text-base-content/60">Filtered by:</span>
+      {% for text, used in filters %}<span class="badge {% if used %}badge-ghost{% else %}badge-dash text-base-content/60{% endif %}"
+            title="{% if used %}A dashboard filter: every tile with this field shows only matching rows{% else %}This filter had nothing picked when the file was saved, so it filters nothing{% endif %}">{{ text }}</span>{% endfor %}
+      {% for text in clicked %}<span class="badge badge-primary badge-soft" title="Clicked on a chart">{{ text }}</span>{% endfor %}
+    </div>
+    {% endif %}
+  </header>
+
+  <div class="grid grid-cols-12 items-start gap-4">
+    {% for item in tiles %}{% with tile=item.tile view=item.view %}
+    <article class="card card-border col-span-12 min-w-0 bg-base-100
+                    {% if tile.width == 'third' %}md:col-span-6 lg:col-span-4{% elif tile.width == 'half' %}md:col-span-6{% elif tile.width == 'two_thirds' %}lg:col-span-8{% endif %}">
+      <div class="card-body min-w-0 gap-2 p-4">
+        {% if tile.kind == "note" %}
+        <div class="min-w-0 break-words text-sm leading-relaxed [&_a]:text-primary [&_a]:underline">{{ tile.text|urlize|linebreaksbr }}</div>
+        {% else %}
+        {% if tile.kind != "kpi" %}<h2 class="card-title min-w-0 text-base">{{ view.name|default:"Removed" }}</h2>{% endif %}
+        {% for text in view.skipped %}<span class="badge badge-warning badge-soft badge-sm">{{ text }}</span>{% endfor %}
+        {% if view.problem %}
+        <div role="alert" class="alert alert-soft alert-warning text-sm"><span>{{ view.problem }}</span></div>
+        {% elif tile.kind == "kpi" %}
+        <div class="stat place-items-start p-0">
+          <div class="stat-title">{{ view.kpi_label }}</div>
+          <div class="stat-value tabular-nums text-primary">{{ view.kpi_value }}</div>
+          <div class="stat-desc">{% if tile.subtitle %}{{ tile.subtitle }}{% else %}From {{ view.name }}{% endif %}</div>
+        </div>
+        {% elif tile.kind == "chart" %}
+        {{ view.option|json_script:item.option_id }}
+        {{ view.click|json_script:item.click_id }}
+        {{ item.picked|json_script:item.picked_id }}
+        <div x-data="insightChart('{{ item.option_id }}', '{{ view.name|escapejs }}', '{{ item.click_id }}', {{ tile.tile_id }}, '{{ item.picked_id }}')"
+             class="{% if tile.height == 'tall' %}h-[30rem]{% else %}h-72{% endif %} w-full min-w-0" role="img" aria-label="{{ view.name }}"></div>
+        {% elif tile.kind == "table" %}
+        <div x-data="fileTable('{{ view.name|escapejs }}')" class="min-w-0 space-y-2">
+        <div class="no-print flex flex-wrap items-center gap-2">
+          <label class="input input-sm grow" title="Show only rows that have this text, e.g. Delhi">
+            <span aria-hidden="true">🔍</span>
+            <input type="search" x-model="search" @input="filter()" placeholder="Search the table" aria-label="Search the table">
+          </label>
+          <span class="text-xs text-base-content/60" x-show="search" x-text="shown + ' of ' + total + ' rows'"></span>
+          <button type="button" class="btn btn-sm" @click="downloadCsv()"
+                  title="Download the rows shown here as a CSV file (opens in Excel). Search first to download only the matching rows.">⤓ CSV</button>
+        </div>
+        <div class="overflow-x-auto {% if tile.height == 'tall' %}max-h-[40rem]{% else %}max-h-96{% endif %}">
+          <table x-ref="table" class="table table-zebra table-sm table-pin-rows">
+            <thead><tr>{% for column in item.columns %}<th class="{% if column.is_value %}text-right{% endif %}">{{ column.label }}</th>{% endfor %}</tr></thead>
+            <tbody>
+              {% for row in item.rows %}<tr>{% for text, is_value in row %}<td class="{% if is_value %}text-right tabular-nums whitespace-nowrap{% elif text|length < 30 %}whitespace-nowrap{% endif %}">{{ text }}</td>{% endfor %}</tr>
+              {% empty %}<tr data-empty><td colspan="{{ item.columns|length }}" class="text-base-content/60">No rows.</td></tr>{% endfor %}
+            </tbody>
+          </table>
+        </div>
+        </div>
+        {% if item.cut %}<p class="text-xs text-base-content/60">Showing the first {{ item.rows|length }} of {{ item.row_count }}{% if view.result.truncated %}+{% endif %} rows. The ⤓ CSV here holds only these; export the table from the app for all of them.</p>{% endif %}
+        {% endif %}
+        {% endif %}
+      </div>
+    </article>
+    {% endwith %}{% empty %}
+    <p class="col-span-12 text-sm text-base-content/60">This dashboard has no tiles.</p>
+    {% endfor %}
+  </div>
+  <footer class="no-print text-xs text-base-content/50">Made with My Insights.</footer>
+</main>
+{% include "my_insights/partials/chart_script.html" %}
+<script>
+  // Table tiles: search and CSV work inside this file (no app behind it), on the rows it holds.
+  function csvCell(text) {
+    // Text like =HYPERLINK(...) gets a leading ' so Excel won't run it; numbers like -5 stay.
+    if (/^[=+\-@\t\r]/.test(text) && !/^[-+]?[₹\d\s.,%]+$/.test(text)) text = "'" + text;
+    return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+  }
+  function fileTable(name) {
+    return {
+      search: "", shown: 0, total: 0,
+      rows() { return [...this.$refs.table.tBodies[0].rows].filter((row) => !row.hasAttribute("data-empty")); },
+      init() { this.total = this.shown = this.rows().length; },
+      filter() {
+        const words = this.search.trim().toLowerCase();
+        this.shown = 0;
+        this.rows().forEach((row) => {
+          const match = !words || row.textContent.toLowerCase().includes(words);
+          row.hidden = !match;
+          if (match) this.shown += 1;
+        });
+      },
+      downloadCsv() {
+        const line = (cells) => [...cells].map((cell) => csvCell(cell.textContent.trim())).join(",");
+        const lines = [line(this.$refs.table.tHead.rows[0].cells)];
+        this.rows().filter((row) => !row.hidden).forEach((row) => lines.push(line(row.cells)));
+        const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = (name.replace(/[\\/:*?"<>|]+/g, "-").trim() || "table") + ".csv";
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+      },
+    };
+  }
+</script>
+</body>
+</html>

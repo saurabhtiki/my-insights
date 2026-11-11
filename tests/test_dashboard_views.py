@@ -167,8 +167,15 @@ def test_global_filters_save_and_name_the_fields_that_changed(setup, client):
 
     response = client.post(filters, {"filters": key, f"{key}_column": "Branch",
                                      f"{key}_op": "in", f"{key}_values": "MUM",
+                                     "action": f"clear_filter:{key}"}, headers=HTMX)  # fmt: skip
+    assert board.filters[0].values == [] and "Branch" in response["HX-Trigger"]
+    assert f'value="clear_filter:{key}"' in response.content.decode()  # the Clear button
+    assert "B2" in tile(client, board, 1).content.decode()  # unfiltered again
+
+    response = client.post(filters, {"filters": key, f"{key}_column": "Branch",
+                                     f"{key}_op": "in", f"{key}_values": "MUM",
                                      "action": f"remove:{key}"}, headers=HTMX)  # fmt: skip
-    assert not board.filters and "Branch" in response["HX-Trigger"]
+    assert not board.filters and "HX-Trigger" not in response  # it was empty: no tile changes
 
 
 def test_click_filters_come_with_the_tile_request(setup, client):

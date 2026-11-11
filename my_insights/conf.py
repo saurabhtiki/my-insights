@@ -14,6 +14,11 @@ DEFAULTS = {
     "MAX_ROWS": 2_000_000,
     "MAX_COLUMNS": 300,
     "PREVIEW_ROW_CAP": 100_000,
+    # Most rows a CSV / Excel export holds. None = MAX_ROWS. (Excel itself stops at 1,048,575.)
+    "EXPORT_ROW_CAP": None,
+    # Most cells (rows × columns) an Excel export holds. Excel files are built in memory
+    # (never on disk): 10 lakh cells take about 350 MB while building. Bigger → use CSV.
+    "EXCEL_MAX_CELLS": 1_000_000,
     # Memory one user's data may use. A load that needs more stops with a clear message.
     "SESSION_MEMORY_MB": 1024,
     # Memory all users' data together may use. None = half of the server's RAM.

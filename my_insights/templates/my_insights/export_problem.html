@@ -1,0 +1,14 @@
+{% extends base_template %}
+{% block title %}Export{% endblock %}
+{% block content %}
+<div class="mx-auto max-w-xl space-y-4 py-10">
+  <div role="alert" class="alert alert-soft alert-warning items-start">
+    <span><b>The file could not be made.</b><br>{{ message }}</span>
+  </div>
+  {% if back %}
+  <a href="{{ back }}" class="btn btn-sm" title="Go back">← Back</a>
+  {% else %}
+  <button type="button" class="btn btn-sm" onclick="history.back()" title="Go back to the page you were on">← Back</button>
+  {% endif %}
+</div>
+{% endblock %}
