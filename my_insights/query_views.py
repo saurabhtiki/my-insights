@@ -19,7 +19,7 @@ from django.views.decorators.http import require_GET, require_http_methods, requ
 from django_datatable import CHOICE, DATE, NUMBER, TEXT, YES_NO, Column, RowsTable, table_response
 
 from . import querying
-from .formula import FUNCTIONS
+from .formula import AGGREGATES, FUNCTIONS
 from .querying import (
     AGGREGATIONS,
     BLANK,
@@ -74,6 +74,8 @@ SIGNS = [
     ("NOT", "The opposite"),
 ]
 COMPARE_SIGNS = ["=", "<>", ">", "<", ">=", "<="]
+GROUP_SIGNS = {"+", "-", "*", "/", "(", ")"}  # the only signs shown for "Per group"
+BOTH_FUNCTIONS = {"ROUND", "ABS"}  # shown for "Per row" and "Per group"
 
 
 def _new_key() -> str:
@@ -106,7 +108,7 @@ def query(request):
         draft_id = secrets.token_hex(8)
 
     with workspace.lock:
-        formula = {"open": False, "problem": "", "name": "", "text": "", "original": ""}
+        formula = {"open": False, "problem": "", "name": "", "text": "", "original": "", "mode": ""}
         name_problem = ""
         notice = ""
         if request.method == "POST":
@@ -115,7 +117,12 @@ def query(request):
             if action == "save_formula":
                 formula = _formula_form(request.POST)
                 problem = querying.save_formula(
-                    workspace, dataset, formula["name"], formula["text"], formula["original"]
+                    workspace,
+                    dataset,
+                    formula["name"],
+                    formula["text"],
+                    formula["original"],
+                    formula["mode"],
                 )
                 if problem:
                     formula |= {"open": True, "problem": problem}
@@ -262,11 +269,18 @@ def _read_form(data, workspace) -> tuple[QuerySpec, str, int | None, str]:
     return spec, name, query_id, action
 
 
+def _function_mode(name: str) -> str:
+    if name in BOTH_FUNCTIONS:
+        return "both"
+    return "group" if name in AGGREGATES else "row"
+
+
 def _formula_form(data) -> dict:
     return {
         "name": " ".join(data.get("formula_name", "").split()),
         "text": data.get("formula_text", "").strip(),
         "original": data.get("formula_original", ""),
+        "mode": mode if (mode := data.get("formula_mode", "")) in querying.FORMULA_MODES else "",
         "open": False,
         "problem": "",
     }
@@ -412,8 +426,11 @@ def _screen_context(workspace, dataset, spec, catalog, plan, result, table) -> d
         "row_count": len(result.rows) if result else 0,
         "row_cap": querying.row_cap(),
         "number_formats": NUMBER_FORMATS,
-        "functions": [(name, help_text) for name, help_text in FUNCTIONS.items()],
-        "signs": SIGNS,
+        # (name, help, which switch shows it: "row", "group" or "both")
+        "functions": [
+            (name, help_text, _function_mode(name)) for name, help_text in FUNCTIONS.items()
+        ],
+        "signs": [(sign, help_text, sign in GROUP_SIGNS) for sign, help_text in SIGNS],
         "compare_signs": COMPARE_SIGNS,
         "aggregation_labels": {key: label for key, (label, _, _) in AGGREGATIONS.items()},
         "all_datasets": list(workspace.datasets.values()),
@@ -562,7 +579,12 @@ def formula_check(request):
     if dataset is not None and form["text"]:
         with workspace.lock:
             check = querying.check_formula(
-                workspace.connection, dataset, form["name"], form["text"], form["original"]
+                workspace.connection,
+                dataset,
+                form["name"],
+                form["text"],
+                form["original"],
+                form["mode"],
             )
     return render(request, "my_insights/partials/formula_check.html", {"check": check})
 

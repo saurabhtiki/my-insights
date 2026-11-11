@@ -36,8 +36,8 @@ wheels = [
 
 [[package]]
 name = "django-datatable"
-version = "0.3.1"
-source = { git = "https://github.com/saurabhtiki/django-datatable#5fe177da45fb8bde05e33b90f6f1fd391a9edb77" }
+version = "0.4.0"
+source = { git = "https://github.com/saurabhtiki/django-datatable#4909deab53f32b39baf2823dfcb7f0a1962798b5" }
 dependencies = [
     { name = "django" },
 ]

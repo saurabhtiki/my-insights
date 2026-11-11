@@ -11,26 +11,63 @@
              title="How the new field is called in the field list">
     </fieldset>
 
+    {% comment %}Per row / Per group: only the chips that work for the choice are shown, and the
+    check says if the formula doesn't match it.{% endcomment %}
+    <fieldset class="fieldset py-0">
+      <legend class="fieldset-legend">Work it out</legend>
+      <div class="join" role="radiogroup" aria-label="Work it out">
+        <input type="radio" name="formula_mode" value="row" x-model="formulaMode" @change="recheckFormula()"
+               class="join-item btn btn-sm" aria-label="Per row"
+               title="On each row, before grouping. e.g. Total Salary = [Basic] + [DA] for each person. Can go in Group by, Values and Filters">
+        <input type="radio" name="formula_mode" value="group" x-model="formulaMode" @change="recheckFormula()"
+               class="join-item btn btn-sm" aria-label="Per group (after grouping)"
+               title="After grouping, on each group's totals. e.g. DA % = SUM([DA]) / SUM([Basic]) * 100 for each department. Values only">
+      </div>
+      <p class="text-xs text-base-content/70" x-show="formulaMode === 'row'">
+        On each row. e.g. <code>[Basic] + [DA]</code> → Total Salary of each person. Put it in Values as Sum to get it per department.</p>
+      <p class="text-xs text-base-content/70" x-show="formulaMode === 'group'" x-cloak>
+        On each group's totals. e.g. <code>SUM([DA]) / SUM([Basic]) * 100</code> → DA % for each department. Best for % and ratios. Values only.</p>
+    </fieldset>
+
     <div class="space-y-2">
-      <p class="text-xs font-medium text-base-content/70">Click (or drag into the box) to add:</p>
+      <div class="flex flex-wrap items-center gap-2">
+        <p class="text-xs font-medium text-base-content/70">Click (or drag into the box) to add:</p>
+        <label class="flex items-center gap-1 text-xs" x-show="formulaMode === 'group'" x-cloak
+               title="What a clicked field adds up to, e.g. Sum → SUM([Basic])">
+          a field as
+          <select x-model="totalOf" class="select select-xs w-36" aria-label="A clicked field adds">
+            <option value="SUM">Sum</option>
+            <option value="AVG">Average</option>
+            <option value="COUNT">Count</option>
+            <option value="COUNT_UNIQUE">Count unique</option>
+            <option value="MIN">Min</option>
+            <option value="MAX">Max</option>
+            <option value="MEDIAN">Median</option>
+          </select>
+        </label>
+      </div>
       <div class="flex max-h-28 flex-wrap gap-1 overflow-y-auto" aria-label="Fields">
         {% for f in fields %}{% if not f.info.error %}
+        {# a per-group field is already a total: used as it is, and only in Per group #}
         <button type="button" draggable="true" class="badge badge-outline cursor-pointer hover:badge-primary"
-                data-name="{{ f.info.name }}" title="{{ f.kind_label }}"
-                @click="insert(fieldRef($el.dataset.name))"
-                @dragstart="$event.dataTransfer.setData('text/plain', fieldRef($el.dataset.name))">{{ f.icon }} {{ f.info.name }}</button>
+                data-name="{{ f.info.name }}" {% if f.values_only %}data-total="1" x-show="formulaMode === 'group'" x-cloak{% endif %}
+                title="{{ f.kind_label }}{% if f.values_only %} · already per group{% endif %}"
+                @click="insert(chipRef($el))"
+                @dragstart="$event.dataTransfer.setData('text/plain', chipRef($el))">{{ f.icon }} {{ f.info.name }}</button>
         {% endif %}{% endfor %}
       </div>
       <div class="flex flex-wrap gap-1" aria-label="Signs">
-        {% for sign, help in signs %}
+        {% for sign, help, in_group in signs %}
         <button type="button" draggable="true" class="kbd kbd-sm cursor-pointer" title="{{ help }}" data-sign="{{ sign }}"
+                {% if not in_group %}x-show="formulaMode === 'row'"{% endif %}
                 @click="insert($el.dataset.sign)"
                 @dragstart="$event.dataTransfer.setData('text/plain', ' ' + $el.dataset.sign + ' ')">{{ sign }}</button>
         {% endfor %}
       </div>
       <div class="flex flex-wrap gap-1" aria-label="Functions">
-        {% for name, help in functions %}
+        {% for name, help, mode in functions %}
         <button type="button" draggable="true" class="badge badge-ghost cursor-pointer font-mono text-xs" title="{{ help }}" data-fn="{{ name }}"
+                {% if mode != "both" %}x-show="formulaMode === '{{ mode }}'"{% if mode == "group" %} x-cloak{% endif %}{% endif %}
                 @click="insert($el.dataset.fn + ($el.dataset.fn === 'TODAY' ? '()' : '('))"
                 @dragstart="$event.dataTransfer.setData('text/plain', $el.dataset.fn + '(')">{{ name }}</button>
         {% endfor %}
@@ -38,31 +75,18 @@
     </div>
 
     <fieldset class="fieldset py-0">
-      <legend class="fieldset-legend">Formula
-        {# opens to the right of the badge so it stays inside the dialog (daisyUI's tooltip centres and gets cut off) #}
-        <span class="group relative font-normal">
-          <span tabindex="0" role="button" class="badge badge-ghost badge-sm cursor-help" aria-label="Row formula or total formula?" aria-describedby="formula-kinds">ⓘ Row or total?</span>
-          <span id="formula-kinds" role="tooltip"
-                class="invisible absolute left-0 top-full z-50 mt-1 w-[min(22rem,calc(100vw-5rem))] space-y-2 rounded-box bg-neutral p-3 text-left text-xs leading-snug text-neutral-content opacity-0 shadow-lg transition-opacity group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100">
-            <span class="block"><b>Row formula:</b> worked out on each row, before grouping.<br>
-              e.g. <code>[Basic] + [DA]</code> → Total Salary of each person. Put it in Values as Sum to get it per department.</span>
-            <span class="block"><b>Total formula:</b> uses SUM / AVG / COUNT…, so it is worked out <i>after</i> grouping, on each group's totals.<br>
-              e.g. <code>SUM([DA]) / SUM([Basic]) * 100</code> → DA % of Basic for each department. Values only.</span>
-            <span class="block">Tip: for % and ratios use a total formula. Adding up each row's % gives a wrong answer.</span>
-          </span>
-        </span>
-      </legend>
+      <legend class="fieldset-legend">Formula</legend>
       <textarea name="formula_text" x-ref="ftext" rows="3" spellcheck="false" class="textarea w-full font-mono"
-                placeholder='e.g. [Sales] - [Cost]   or   IF([Qty] > 10, "Bulk", "Small")'
+                :placeholder="formulaMode === 'group' ? 'e.g. SUM([DA]) / SUM([Basic]) * 100' : 'e.g. [Basic] + [DA]   or   IF([Qty] > 10, &quot;Bulk&quot;, &quot;Small&quot;)'"
                 hx-post="{% url 'my_insights:formula_check' %}" hx-trigger="input changed delay:400ms, check-now"
                 hx-include="#formula-box" hx-target="#formula-check" hx-sync="this:replace"
-                title="Fields go in [brackets], text in &quot;quotes&quot;. SUM / AVG / COUNT… make a total formula (e.g. SUM([Profit]) / SUM([Sales]))">{{ formula.text }}</textarea>
+                title="Fields go in [brackets], text in &quot;quotes&quot;">{{ formula.text }}</textarea>
       <div id="formula-check" class="min-h-5">
         {% if formula.problem %}<p class="text-sm text-error">✗ {{ formula.problem }}</p>{% endif %}
       </div>
     </fieldset>
 
-    <details class="collapse collapse-arrow border border-base-300" x-data="conditionBuilder()">
+    <details class="collapse collapse-arrow border border-base-300" x-data="conditionBuilder()" x-show="formulaMode === 'row'">
       <summary class="collapse-title text-sm font-medium" title="Pick a field, a test and a result; adds an IF or IFS to the formula">IF / Else if — build by clicking</summary>
       <div class="collapse-content space-y-2 text-sm">
         <template x-for="(row, index) in rows" :key="index">
@@ -93,7 +117,7 @@
       </div>
     </details>
 
-    <details class="collapse collapse-arrow border border-base-300" x-data="switchBuilder()">
+    <details class="collapse collapse-arrow border border-base-300" x-data="switchBuilder()" x-show="formulaMode === 'row'">
       <summary class="collapse-title text-sm font-medium" title="Turn fixed values into other values, e.g. MUM → West">SWITCH — match a field's values</summary>
       <div class="collapse-content space-y-2 text-sm">
         <div class="flex flex-wrap items-center gap-2">

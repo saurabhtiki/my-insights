@@ -1,6 +1,6 @@
 {% if check %}
 {% if check.ok %}
-<p class="text-sm text-success">✓ OK — gives {{ check.kind_word }}{% if check.is_total %}, worked out on totals (use it in Values){% endif %}.
+<p class="text-sm text-success">✓ OK — gives {{ check.kind_word }}{% if check.is_total %}, worked out per group (use it in Values){% endif %}.
   {% if check.examples %}<span class="text-base-content/70">{% if check.is_total %}Whole data:{% else %}Example:{% endif %} {{ check.examples|join:", " }}</span>{% endif %}</p>
 {% else %}
 <p class="text-sm text-error">✗ {{ check.message }}</p>

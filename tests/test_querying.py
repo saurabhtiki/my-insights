@@ -314,7 +314,7 @@ def test_a_total_formula_cannot_group_or_filter(sales):
     dataset.calculated.append(CalculatedField("Margin", "SUM([Amount]) / SUM([Cost])"))
     spec = spec_of(dataset, [GroupItem("g", "Margin")], [ValueItem("v", "*", "rows")])
     assert querying.plan_query(spec, dataset).problems == [
-        "“Margin” is a total formula, so it can only go in Values."
+        "“Margin” is worked out per group, so it can only go in Values."
     ]
 
 
@@ -417,6 +417,7 @@ def test_query_with_only_a_filter_lists_the_rows(client):
     rows = workspace.query_result_cache[3]
     assert [(row["c1"], row["c2"]) for row in rows] == [("DEL", "B2"), (None, "B2")]
     assert f'value="clear_filter:{key}"' in page
+    assert 'x-data="dtDensity"' in page and 'x-data="dtBorder"' in page  # S/M/L and Lines
 
 
 @pytest.mark.django_db
@@ -494,6 +495,51 @@ def test_formula_box_checks_and_saves(client):
         client, dataset, action="save_formula", formula_name="Loss", formula_text="DROP"
     ).content.decode()
     assert "Unknown word “DROP”" in refused and len(dataset.calculated) == 1
+
+
+@pytest.mark.django_db
+def test_formula_must_match_per_row_or_per_group(client):
+    _, dataset = upload(client)
+
+    def check(text, mode):
+        return client.post(
+            reverse("my_insights:formula_check"),
+            {"dataset": dataset.dataset_id, "formula_text": text, "formula_mode": mode},
+        ).content.decode()
+
+    assert "OK" in check("[Amount] - [Cost]", "row")
+    assert "OK" in check("SUM([Amount]) / SUM([Cost])", "group")
+    assert "“Per row” can&#x27;t use SUM" in check("SUM([Amount])", "row")
+    assert "“Per group” needs a total, e.g. SUM([Basic])" in check("[Amount] * 2", "group")
+    assert "OK" in check("[Amount] * 2", "bogus")  # an unknown switch value is ignored
+    refused = post(
+        client,
+        dataset,
+        action="save_formula",
+        formula_name="Margin",
+        formula_text="[Amount] - [Cost]",
+        formula_mode="group",
+    ).content.decode()
+    assert "needs a total" in refused and not dataset.calculated
+
+
+@pytest.mark.django_db
+def test_formula_box_shows_only_what_the_switch_allows(client):
+    _, dataset = upload(client)
+    page = post(client, dataset).content.decode()
+    assert 'name="formula_mode" value="row"' in page and "Row or total?" not in page
+
+    # SUM chips only for Per group, IF only for Per row, ROUND for both
+    def chip(name):  # the opening tag of a function chip
+        return re.search(rf'data-fn="{name}"[^>]*>', page).group()
+
+    assert "formulaMode === 'group'" in chip("SUM")
+    assert "formulaMode === 'row'" in chip("IF")
+    assert "x-show" not in chip("ROUND")
+    # no Group by → a new field starts on Per row; with one → Per group
+    assert "'', false)" in page
+    grouped = post(client, dataset, action="add_group:Item").content.decode()
+    assert "'', true)" in grouped
 
 
 @pytest.mark.django_db

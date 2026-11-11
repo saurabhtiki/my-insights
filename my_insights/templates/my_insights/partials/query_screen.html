@@ -5,7 +5,7 @@ view) and the result on the right. On a small screen the panel slides in from th
 ("Edit query" button) and covers the result.
 {% endcomment %}
 <div id="query-screen" class="grid items-start gap-4 lg:gap-x-1 lg:grid-cols-[var(--panel-w,22rem)_auto_minmax(0,1fr)] xl:grid-cols-[var(--panel-w,26rem)_auto_minmax(0,1fr)]"
-     x-data="queryScreen({{ formula.open|yesno:'true,false' }})" @keydown.escape="closePanel()">
+     x-data="queryScreen({{ formula.open|yesno:'true,false' }}, '{{ formula.mode }}', {{ groups|yesno:'true,false' }})" @keydown.escape="closePanel()">
 <div x-show="panelOpen" x-transition.opacity class="fixed inset-0 z-40 bg-black/40 lg:hidden" @click="closePanel()" aria-hidden="true"></div>
 <form id="query-form" method="post" action="{% url 'my_insights:query' %}"
       hx-post="{% url 'my_insights:query' %}"
@@ -76,13 +76,13 @@ view) and the result on the right. On a small screen the panel slides in from th
           <li data-field="{{ f.info.name }}" {% if f.values_only %}data-values-only="1"{% endif %} data-search="{{ f.info.name|lower }}"
               x-show="$el.dataset.search.includes(find.toLowerCase())"
               class="group flex cursor-grab items-center gap-2 rounded-field border {% if f.info.error %}border-error{% else %}border-base-300{% endif %} bg-base-100 px-2 py-1 text-sm hover:border-primary"
-              title="{% if f.info.error %}{{ f.info.error }}{% elif f.info.calculated %}{{ f.info.name }} = {{ f.info.formula }}{% if f.values_only %} (a total formula: worked out after grouping, Values only){% else %} (a row formula: worked out on each row){% endif %}{% else %}{{ f.kind_label }}{% endif %}">
+              title="{% if f.info.error %}{{ f.info.error }}{% elif f.info.calculated %}{{ f.info.name }} = {{ f.info.formula }}{% if f.values_only %} (per group: worked out after grouping, Values only){% else %} (per row: worked out on each row){% endif %}{% else %}{{ f.kind_label }}{% endif %}">
             <span class="badge {% if f.info.calculated %}badge-primary badge-soft{% else %}badge-ghost{% endif %} badge-sm w-8 shrink-0" title="{{ f.kind_label }}">{{ f.icon }}</span>
             <span class="min-w-0 flex-1 truncate">{{ f.info.name }}</span>
             {% if f.info.calculated %}
             <button type="button" class="btn btn-ghost btn-xs btn-square" title="Change this calculated field" aria-label="Change {{ f.info.name }}"
-                    data-name="{{ f.info.name }}" data-formula="{{ f.info.formula }}"
-                    @click="openFormula($el.dataset.name, $el.dataset.formula, $el.dataset.name)">✎</button>
+                    data-name="{{ f.info.name }}" data-formula="{{ f.info.formula }}" {% if f.values_only %}data-total="1"{% endif %}
+                    @click="openFormula($el.dataset.name, $el.dataset.formula, $el.dataset.name, !!$el.dataset.total)">✎</button>
             <button type="submit" name="action" value="remove_formula:{{ f.info.name }}" class="btn btn-ghost btn-xs btn-square text-error"
                     title="Remove this calculated field" aria-label="Remove {{ f.info.name }}"
                     data-confirm="{{ f.remove_confirm }}" onclick="return confirm(this.dataset.confirm)">✕</button>
@@ -91,7 +91,7 @@ view) and the result on the right. On a small screen the panel slides in from th
           {% endfor %}
         </ul>
         <button type="button" class="btn btn-sm" @click="newFormula()"
-                title="Make a new field from a formula.&#10;Row formula, worked out on each row: Total Salary = [Basic] + [DA].&#10;Total formula, worked out after grouping: DA % = SUM([DA]) / SUM([Basic]) * 100 (Values only).">ƒ New calculated field</button>
+                title="Make a new field from a formula.&#10;Per row: Total Salary = [Basic] + [DA].&#10;Per group (after grouping): DA % = SUM([DA]) / SUM([Basic]) * 100 (Values only).">ƒ New calculated field</button>
       </div>
     </aside>
 
@@ -147,7 +147,7 @@ view) and the result on the right. On a small screen the panel slides in from th
               {% else %}
               <input type="hidden" name="{{ v.item.key }}_agg" value="{{ v.item.agg }}">
               <span class="min-w-0 truncate font-medium {% if v.item.agg != 'rows' and not v.info %}text-error{% endif %}">{% if v.item.agg == "rows" %}Count of rows{% else %}{{ v.item.column }}{% endif %}</span>
-              {% if v.item.agg == "formula" %}<span class="badge badge-primary badge-soft badge-xs" title="Worked out after grouping, on each group's totals, e.g. SUM([DA]) / SUM([Basic]) per department">total formula</span>{% endif %}
+              {% if v.item.agg == "formula" %}<span class="badge badge-primary badge-soft badge-xs" title="Worked out after grouping, on each group's totals, e.g. SUM([DA]) / SUM([Basic]) per department">per group</span>{% endif %}
               {% endif %}
               <span class="flex-1"></span>
               <input name="{{ v.item.key }}_label" value="{{ v.item.label }}" placeholder="{{ v.default_label }}" maxlength="100"

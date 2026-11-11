@@ -398,7 +398,7 @@ def _usable(name: str, catalog: dict, dataset, plan: QueryPlan, box: str) -> Fie
         plan.problems.append(f"Calculated field “{name}”: {info.error}")
         return None
     if info.is_total:
-        plan.problems.append(f"“{name}” is a total formula, so it can only go in Values.")
+        plan.problems.append(f"“{name}” is worked out per group, so it can only go in Values.")
         return None
     return info
 
@@ -695,7 +695,27 @@ def value_choices(connection, dataset, column: str, search: str = "") -> list[tu
 # ---------- calculated fields ----------
 
 
-def check_formula(connection, dataset, name: str, formula: str, original: str = "") -> dict:
+FORMULA_MODES = ("row", "group")  # the "Work it out: Per row / Per group" switch
+
+
+def mode_problem(is_total: bool, mode: str) -> str:
+    """Does the formula match the switch? "" when it does (or no switch was sent)."""
+    if mode == "row" and is_total:
+        return (
+            "“Per row” can't use SUM, AVG, COUNT…: they add up many rows. "
+            "Pick “Per group” above, or take them out."
+        )
+    if mode == "group" and not is_total:
+        return (
+            "“Per group” needs a total, e.g. SUM([Basic]): click a field to add one. "
+            "Or pick “Per row” above."
+        )
+    return ""
+
+
+def check_formula(
+    connection, dataset, name: str, formula: str, original: str = "", mode: str = ""
+) -> dict:
     """Try a formula on the data: {"ok", "message", "kind", "is_total", "examples"}."""
     calculated = {c.name: c.formula for c in dataset.calculated if c.name != original}
     fields = Fields({column.name: column.kind for column in dataset.columns}, calculated)
@@ -704,6 +724,10 @@ def check_formula(connection, dataset, name: str, formula: str, original: str = 
     except FormulaError as error:
         logger.info("Formula refused: %s", error)
         return {"ok": False, "message": str(error)}
+    problem = mode_problem(compiled.is_total, mode)
+    if problem:
+        logger.info("Formula refused: %s", problem)
+        return {"ok": False, "message": problem}
     table = quote_name(dataset.table_name)
     try:
         if compiled.is_total:
@@ -746,11 +770,13 @@ def field_name_error(dataset, name: str, original: str = "") -> str:
     return ""
 
 
-def save_formula(workspace, dataset, name: str, formula: str, original: str = "") -> str:
+def save_formula(
+    workspace, dataset, name: str, formula: str, original: str = "", mode: str = ""
+) -> str:
     """Add or change a calculated field. Returns "" or the problem to show."""
     problem = field_name_error(dataset, name, original)
     if not problem:
-        check = check_formula(workspace.connection, dataset, name, formula, original)
+        check = check_formula(workspace.connection, dataset, name, formula, original, mode)
         problem = "" if check["ok"] else check["message"]
     if problem:
         logger.info("Calculated field refused: %s", problem)

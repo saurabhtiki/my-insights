@@ -2,7 +2,7 @@
 
     Profit   = [Sales] - [Cost]
     Size     = IFS([Qty] > 100, "Large", [Qty] > 10, "Medium", "Small")
-    Margin % = SUM([Profit]) / SUM([Sales]) * 100        ← a "total formula" (Values only)
+    Margin % = SUM([Profit]) / SUM([Sales]) * 100        ← a "per group" formula (Values only)
 
 The formula is read by our own parser, and the SQL is written by this module from fixed
 pieces: column names are quoted, text is escaped, numbers are checked. Typed text is never
@@ -51,13 +51,13 @@ FUNCTIONS = {  # every word a formula may use, with a short help line for the ch
     "MONTH": "MONTH(date) — 1 to 12",
     "DAYS_BETWEEN": "DAYS_BETWEEN(start date, end date)",
     "TODAY": "TODAY() — today's date",
-    "SUM": "SUM(number) — total over all rows",
-    "AVG": "AVG(number) — average over all rows",
-    "MEDIAN": "MEDIAN(number) — middle value",
-    "MIN": "MIN(value) — smallest",
-    "MAX": "MAX(value) — biggest",
-    "COUNT": "COUNT(value) — rows that are not blank",
-    "COUNT_UNIQUE": "COUNT_UNIQUE(value) — different values",
+    "SUM": "SUM(number) — total of each group",
+    "AVG": "AVG(number) — average of each group",
+    "MEDIAN": "MEDIAN(number) — middle value of each group",
+    "MIN": "MIN(value) — smallest in each group",
+    "MAX": "MAX(value) — biggest in each group",
+    "COUNT": "COUNT(value) — rows that are not blank, per group",
+    "COUNT_UNIQUE": "COUNT_UNIQUE(value) — different values, per group",
 }
 WORDS = {"AND", "OR", "NOT", "TRUE", "FALSE"}
 
@@ -150,7 +150,7 @@ def compile_formula(text: str, fields: Fields, _stack: tuple[str, ...] = ()) -> 
     if result.is_total and parser.bare_columns:
         name = min(parser.bare_columns)
         raise FormulaError(
-            f"This is a total formula (it uses SUM, AVG…), so “[{name}]” must be inside one "
+            f"This is a per-group formula (it uses SUM, AVG…), so “[{name}]” must be inside one "
             f"too, e.g. SUM([{name}])."
         )
     return result

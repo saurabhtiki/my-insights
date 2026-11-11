@@ -19,7 +19,7 @@ one row per month and branch, plus a Total row.
 | 5 | Filters (all must be true — AND): text is one of / is not one of / contains / blank / not blank; number = ≠ > < between blank; date between or quick pick (Today, This month, Last month, This FY, Last FY, Last N days). |
 | 6 | Filters can also use a value total ("Sum of Amount > 1,00,000"). |
 | 7 | Calculated fields by formula: `[Column]`, `+ - * / ( )`, numbers, `ROUND`, `ABS`, `IF`, text join `&`, `YEAR`, `MONTH`, `DAYS_BETWEEN`. Anything else refused, naming it. Divide by 0 → blank. |
-| 8 | A formula with `SUM/AVG/COUNT…` is a **total formula** (e.g. `SUM([Profit]) / SUM([Sales])`), Values only. The formula box has a "Row or total?" tip with both examples. |
+| 8 | The formula box asks **Work it out: Per row / Per group**. Per row: `[Basic] + [DA]` (IF, SWITCH… shown; SUM… hidden). Per group: worked out after grouping, e.g. `SUM([DA]) / SUM([Basic]) * 100`; a clicked field adds `SUM([Field])` (Sum / Average / Count… picker), Values only. Only the chips that fit are shown; a formula that doesn't match is refused with a message. New fields start on Per group when the query has a Group by. |
 | 9 | Live result on every change, up to 100,000 rows, paged (`django-datatable`), **Total** row. No group → one total row; no values → unique groups list. |
 | 10 | Sort by any group or value, A→Z / Z→A, many levels. **Top N**. No sort → group order. |
 | 11 | Indian grouping (12,34,567.89), ₹ and 0–2 decimals per value; averages 2, counts 0. Dates dd-mm-yyyy. |

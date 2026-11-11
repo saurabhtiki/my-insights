@@ -38,8 +38,12 @@
     if (/^-?\d+(\.\d+)?$/.test(text) || /^\[.*\]$/.test(text)) return text;
     return '"' + text.replace(/"/g, '""') + '"';
   }
-  function queryScreen(formulaOpen) {
+  function queryScreen(formulaOpen, formulaMode, hasGroups) {
     return {
+      // Calculated field box: "row" (each row) or "group" (each group's totals). A new field
+      // starts on "group" when the query has a Group by, else "row".
+      formulaMode: formulaMode || "row",
+      totalOf: "SUM",  // Per group: a clicked field adds e.g. SUM([Basic])
       // Small screens: is the builder panel slid in? Kept on window, because every change
       // swaps in a new screen.
       panelOpen: window.queryPanelOpen === true,
@@ -74,16 +78,23 @@
         handle.addEventListener("pointercancel", stop);
       },
       init() { if (formulaOpen) this.$nextTick(() => this.$refs.dialog.showModal()); },
-      newFormula() { this.openFormula("", "", ""); },
-      openFormula(name, text, original) {
+      newFormula() { this.openFormula("", "", "", hasGroups); },
+      openFormula(name, text, original, perGroup) {
+        this.formulaMode = perGroup ? "group" : "row";
         this.$refs.fname.value = name;
         this.$refs.ftext.value = text;
         this.$refs.forig.value = original;
         document.getElementById("formula-check").innerHTML = "";
         this.$refs.dialog.showModal();
-        if (text) htmx.trigger(this.$refs.ftext, "check-now");
+        // after Alpine has ticked the Per row / Per group radio, so the check sends the right one
+        this.$nextTick(() => this.recheckFormula());
         (name ? this.$refs.ftext : this.$refs.fname).focus();
       },
+      chipRef(chip) {
+        const ref = fieldRef(chip.dataset.name);
+        return this.formulaMode === "group" && !chip.dataset.total ? this.totalOf + "(" + ref + ")" : ref;
+      },
+      recheckFormula() { if (this.$refs.ftext.value.trim()) htmx.trigger(this.$refs.ftext, "check-now"); },
       insert(snippet) {
         if (!snippet) return;
         const box = this.$refs.ftext;
