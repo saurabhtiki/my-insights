@@ -18,8 +18,9 @@ from django.utils.html import format_html
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 from django_datatable import CHOICE, DATE, NUMBER, TEXT, YES_NO, Column, RowsTable, table_response
 
-from . import querying
+from . import chart_views, charting, query_dataset, querying
 from .formula import AGGREGATES, FUNCTIONS
+from .query_dataset import QueryDatasetFailed
 from .querying import (
     AGGREGATIONS,
     BLANK,
@@ -110,9 +111,15 @@ def query(request):
     with workspace.lock:
         formula = {"open": False, "problem": "", "name": "", "text": "", "original": "", "mode": ""}
         name_problem = ""
+        chart_problem = ""
         notice = ""
+        params = request.POST if request.method == "POST" else request.GET
+        tab = "chart" if params.get("tab") == "chart" else "table"
+        chart_id = _number(params.get("chart_id") or params.get("chart")) or None
+        chart_name = " ".join(params.get("chart_name", "").split())
         if request.method == "POST":
             spec, name, query_id, action = _read_form(request.POST, workspace)
+            chart = chart_views.read_chart_form(request.POST)
             dataset = workspace.datasets[spec.dataset_id]
             if action == "save_formula":
                 formula = _formula_form(request.POST)
@@ -136,11 +143,24 @@ def query(request):
                 notice = f"Removed calculated field “{removed}”."
         else:
             spec, name, query_id = _start_spec(request.GET, workspace)
+            chart = None
+            opened = workspace.charts.get(chart_id) if chart_id else None
+            if opened is not None and workspace.chart_query(opened) is not None:
+                chart_spec = workspace.chart_query(opened)
+                if chart_spec.dataset_id in workspace.datasets:
+                    spec, chart = copy.deepcopy(chart_spec), copy.deepcopy(opened.spec)
+                    query_id, chart_name, tab = opened.query_id, opened.name, "chart"
+                    saved_query = workspace.queries.get(query_id) if query_id else None
+                    name = saved_query.name if saved_query else ""
+            elif chart_id:
+                chart_id = None  # removed meanwhile: a new chart
             dataset = workspace.datasets[spec.dataset_id]
             action = ""
 
+        if action in ("tab:chart", "tab:table"):
+            tab = action.partition(":")[2]
         catalog = querying.field_catalog(dataset)  # built once per request: it reads formulas
-        if action and not action.startswith(("save_formula", "remove_formula:")):
+        if action and not action.startswith(("save_formula", "remove_formula:", "tab:")):
             _apply_action(spec, action, catalog)
         plan = querying.plan_query(spec, dataset, catalog=catalog)
         _remember_draft(workspace, draft_id, spec)
@@ -151,10 +171,64 @@ def query(request):
             except QueryFailed as error:
                 plan.problems.append(str(error))
             else:
-                rows = _table_rows(plan, result)
-                workspace.query_result_cache = (draft_id, copy.deepcopy(spec), plan, rows)
-                table = _result_table(request, plan, rows, draft_id)
+                plan.notes += result.notes
+                rows = _table_rows(result)
+                workspace.query_result_cache = (draft_id, copy.deepcopy(spec), result.columns, rows)
+                table = _result_table(request, result.columns, rows, draft_id)
         suggested_name = querying.default_name(spec, dataset, catalog)
+
+        # The chart draws the plain answer: an Across field is one more group (its colours).
+        # Its rows are the cells already fetched for the table (same Top N and total filters).
+        chart_spec, chart_plan = spec, plan
+        chart_rows = result.rows if result is not None else []
+        if plan.across is not None:
+            chart_spec = querying.long_spec(spec)
+            chart_plan = querying.plan_query(chart_spec, dataset, catalog=catalog)  # columns
+            chart_rows = result.long_rows if result is not None else []
+        if chart is None:  # the Chart tab not used yet: pick fields from the query
+            chart = charting.default_chart(chart_spec, chart_plan)
+        built = None
+        if result is not None and (tab == "chart" or action == "save_chart"):
+            built = charting.build_chart(chart, chart_spec, chart_plan, chart_rows)
+            if result.truncated:
+                built.notes.insert(
+                    0,
+                    f"The answer has more than {querying.row_cap():,} rows, so the chart uses "
+                    "only the first ones and its totals may be short. Add a filter or group by "
+                    "fewer fields.",
+                )
+            if built.problems:
+                logger.info("Chart problems shown: %s", built.problems)
+        elif tab == "chart":
+            built = charting.ChartResult()
+        suggested_chart = chart_views.suggested_chart_name(chart, name or suggested_name)
+
+        if action == "save_chart":
+            final_name = chart_name or suggested_chart
+            ignore = chart_id if chart_id in workspace.charts else None
+            chart_problem = chart_views.chart_name_error(workspace, final_name, ignore_id=ignore)
+            if not chart_problem and (plan.problems or built is None or built.problems):
+                chart_problem = "Fix the problems shown before saving the chart."
+            if not chart_problem:
+                saved_chart, note = chart_views.save_chart(
+                    workspace,
+                    chart_id,
+                    query_id,
+                    final_name,
+                    chart,
+                    spec,
+                    charting.names_of(chart_spec, chart_plan),
+                )
+                url = reverse("my_insights:query") + f"?chart={saved_chart.chart_id}&saved=chart"
+                if note:
+                    url += "&own=1"
+                if is_htmx:
+                    return HttpResponse(
+                        status=204, headers={"HX-Redirect": url, "HX-Trigger": "query-saved"}
+                    )
+                return redirect(url)
+            logger.info("Chart not saved: %s", chart_problem)
+            tab = "chart"
 
         if action == "save":
             final_name = name or suggested_name
@@ -164,6 +238,15 @@ def query(request):
             )
             if not name_problem and plan.problems:
                 name_problem = "Fix the problems above before saving."
+            if (
+                not name_problem
+                and saved is not None
+                and spec.dataset_id in workspace.built_on_query(saved.query_id)
+            ):
+                name_problem = (
+                    f"“{dataset.name}” is made from this query, so the query can't ask about "
+                    "it. Pick another dataset."
+                )
             if not name_problem:
                 if saved is None:
                     saved = SavedQuery(workspace.new_query_id(), final_name, copy.deepcopy(spec))
@@ -171,7 +254,18 @@ def query(request):
                 else:
                     saved.name, saved.spec = final_name, copy.deepcopy(spec)
                 logger.info("Query %s saved", saved.query_id)
+                stale = query_dataset.refresh_from_query(workspace, saved.query_id)
+                for problem in stale:
+                    logger.warning("Query %s saved; %s", saved.query_id, problem)
+                open_chart = workspace.charts.get(chart_id) if chart_id else None
+                if open_chart is not None and open_chart.query_id in (None, saved.query_id):
+                    # The chart on screen now follows the query just saved (and its boxes).
+                    open_chart.query_id, open_chart.own_query = saved.query_id, None
                 url = reverse("my_insights:query") + f"?open={saved.query_id}&saved=1"
+                if chart_id in workspace.charts:
+                    url = reverse("my_insights:query") + f"?chart={chart_id}&saved=1"
+                if stale:
+                    url += "&stale=1"
                 if is_htmx:
                     return HttpResponse(
                         status=204, headers={"HX-Redirect": url, "HX-Trigger": "query-saved"}
@@ -185,20 +279,56 @@ def query(request):
             request,
             workspace,
             False,
-            **_screen_context(workspace, dataset, spec, catalog, plan, result, table),
+            **_screen_context(workspace, dataset, spec, catalog, plan, result, table, query_id),
+            **chart_views.chart_context(
+                workspace, chart, chart_spec, chart_plan, built, chart_id, chart_name, query_id
+            ),
+            tab=tab,
+            # Until a chart setting is changed (or the chart saved), it keeps following the
+            # query: e.g. a 2nd Group by field becomes the colours.
+            chart_touched=request.POST.get("chart_touched") == "1" or chart_id in workspace.charts,
+            chart_problem=chart_problem,
+            suggested_chart=suggested_chart,
             draft_id=draft_id,
             query_id=query_id,
             saved=workspace.queries.get(query_id) if query_id else None,
             name=name,
             suggested_name=suggested_name,
             name_problem=name_problem,
-            notice=notice or ("Saved." if request.GET.get("saved") == "1" else ""),
+            notice=notice or _saved_notice(request.GET),
+            problem_notice=_take_notice(workspace),
             dirty=request.method == "POST",  # a saved query leaves through the redirect above
             formula=formula,
         )
     if is_htmx:
         return render(request, "my_insights/partials/query_screen.html", context)
     return render(request, "my_insights/query.html", context)
+
+
+def _take_notice(workspace) -> str:
+    """A problem from the last request that redirected here (shown once)."""
+    text, workspace.notice = workspace.notice, ""
+    return text
+
+
+def _saved_notice(params) -> str:
+    if params.get("saved") == "chart":
+        if params.get("own") == "1":
+            return (
+                "Chart saved. The query had changes that were not saved, so this chart keeps "
+                "its own copy of them."
+            )
+        return "Chart saved."
+    if params.get("stale") == "1":
+        return (
+            "Saved. The dataset made from this query could not be updated (e.g. the answer "
+            "now has too many rows), so it still has the old answer."
+        )
+    if params.get("made") == "1":
+        return (
+            "Made a dataset from this query's answer. It is updated each time you save the query."
+        )
+    return "Saved." if params.get("saved") == "1" else ""
 
 
 def _start_spec(params, workspace) -> tuple[QuerySpec, str, int | None]:
@@ -246,7 +376,7 @@ def _read_form(data, workspace) -> tuple[QuerySpec, str, int | None, str]:
     for key in _keys(data, "filters"):
         op = data.get(f"{key}_op", "")
         if op in ("in", "not_in"):
-            values = data.getlist(f"{key}_values")[: querying.MAX_TICK_VALUES]
+            values = list(dict.fromkeys(data.getlist(f"{key}_values")))[: querying.MAX_TICK_VALUES]
         else:
             values = [data.get(f"{key}_a", ""), data.get(f"{key}_b", "")]
         spec.filters.append(
@@ -256,8 +386,13 @@ def _read_form(data, workspace) -> tuple[QuerySpec, str, int | None, str]:
                 data.get(f"{key}_value_key", ""),
                 op,
                 [value[:200] for value in values],
+                any_of=data.get(f"{key}_any") == "1",
             )
         )
+    across = _keys(data, "across")[:1]
+    if across:
+        key = across[0]
+        spec.across = GroupItem(key, data.get(f"{key}_column", ""), data.get(f"{key}_part", ""))
     for key in _keys(data, "sorts"):
         spec.sorts.append(
             SortItem(key, data.get(f"{key}_target", ""), data.get(f"{key}_desc") == "1")
@@ -298,10 +433,27 @@ def _apply_action(spec: QuerySpec, action: str, catalog: dict) -> None:
             spec.values.append(ValueItem(_new_key(), "*", "rows"))
         elif info:
             spec.values.append(ValueItem(_new_key(), target, querying.default_aggregation(info)))
-    elif kind == "add_filter" and info and not info.is_total and len(spec.filters) < MAX_ITEMS:
-        spec.filters.append(FilterItem(_new_key(), target, "", DEFAULT_OP[info.kind_class]))
-    elif kind == "add_total_filter" and any(v.key == target for v in spec.values):
-        spec.filters.append(FilterItem(_new_key(), "", target, DEFAULT_OP["total"]))
+    elif kind == "add_across" and info and not info.is_total:
+        part = "month" if info.kind_class == "date" else ""
+        spec.across = GroupItem(_new_key(), target, part)  # only one: it replaces the last
+    elif kind in ("add_filter", "add_any_filter") and info and not info.is_total:
+        if len(spec.filters) < MAX_ITEMS:
+            spec.filters.append(
+                FilterItem(
+                    _new_key(), target, "", DEFAULT_OP[info.kind_class], any_of=kind != "add_filter"
+                )
+            )
+    elif kind in ("add_total_filter", "add_any_total_filter"):
+        if any(v.key == target for v in spec.values) and len(spec.filters) < MAX_ITEMS:
+            spec.filters.append(
+                FilterItem(
+                    _new_key(), "", target, DEFAULT_OP["total"], any_of=kind != "add_total_filter"
+                )
+            )
+    elif kind == "move_filter":  # between "All of these" and "Any one of these"
+        for item in spec.filters:
+            if item.key == target:
+                item.any_of = not item.any_of
     elif kind == "add_sort" and len(spec.sorts) < MAX_ITEMS:
         is_value = any(v.key == target for v in spec.values)
         known = is_value or any(g.key == target for g in spec.groups)
@@ -312,12 +464,15 @@ def _apply_action(spec: QuerySpec, action: str, catalog: dict) -> None:
         spec.values = [v for v in spec.values if v.key != target]
         spec.filters = [f for f in spec.filters if f.key != target and f.value_key != target]
         spec.sorts = [s for s in spec.sorts if s.key != target and s.target != target]
+        if spec.across is not None and spec.across.key == target:
+            spec.across = None
     elif kind == "clear_filter":  # keep the filter, empty what it tests (ticks, text, dates)
         for item in spec.filters:
             if item.key == target:
                 item.values = []
     elif kind == "clear":
         spec.groups, spec.values, spec.filters, spec.sorts, spec.top_n = [], [], [], [], None
+        spec.across = None
 
 
 def _remember_draft(workspace, draft_id: str, spec: QuerySpec) -> None:
@@ -331,7 +486,7 @@ def _remember_draft(workspace, draft_id: str, spec: QuerySpec) -> None:
 # ---------- what the template shows ----------
 
 
-def _screen_context(workspace, dataset, spec, catalog, plan, result, table) -> dict:
+def _screen_context(workspace, dataset, spec, catalog, plan, result, table, query_id) -> dict:
     fields = [
         {
             "info": info,
@@ -404,18 +559,34 @@ def _screen_context(workspace, dataset, spec, catalog, plan, result, table) -> d
     sorted_targets = {s.target for s in spec.sorts}
     totals = []
     if result and result.totals is not None:
-        for column in plan.columns:
-            if column.is_value:
+        for column in result.columns:
+            if column.is_value and column.key in result.totals:
                 totals.append(
                     (column.label, querying.format_value(result.totals[column.key], column))
                 )
+    across = None
+    if spec.across is not None:
+        info = catalog.get(spec.across.column)
+        across = {
+            "item": spec.across,
+            "info": info,
+            "parts": [(key, label) for key, (label, _) in DATE_PARTS.items()]
+            if info and info.kind_class == "date"
+            else [],
+        }
+    hidden = workspace.built_on_query(query_id) if query_id else set()
     return {
         "dataset": dataset,
         "spec": spec,
         "fields": fields,
         "groups": groups,
+        "across": across,
         "values": values,
-        "filters": filters,
+        "filters": [f for f in filters if not f["item"].any_of],
+        "any_filters": [f for f in filters if f["item"].any_of],
+        "query_datasets": [
+            d for d in workspace.datasets.values() if query_id and d.query_id == query_id
+        ],
         "sorts": sorts,
         "sort_options": [t for t in group_targets + value_targets if t[0] not in sorted_targets],
         "value_targets": value_targets,
@@ -433,7 +604,8 @@ def _screen_context(workspace, dataset, spec, catalog, plan, result, table) -> d
         "signs": [(sign, help_text, sign in GROUP_SIGNS) for sign, help_text in SIGNS],
         "compare_signs": COMPARE_SIGNS,
         "aggregation_labels": {key: label for key, (label, _, _) in AGGREGATIONS.items()},
-        "all_datasets": list(workspace.datasets.values()),
+        # not the datasets made from this query: it can't ask about its own answer
+        "all_datasets": [d for d in workspace.datasets.values() if d.dataset_id not in hidden],
         "blank": BLANK,
     }
 
@@ -447,6 +619,15 @@ def _formula_remove_confirm(workspace, dataset, name: str) -> str:
             + ", ".join(f"“{q.name}”" for q in queries)
             + "."
         )
+    charts = [
+        chart.name
+        for chart in workspace.charts.values()
+        if chart.own_query
+        and chart.own_query.dataset_id == dataset.dataset_id
+        and any(item.column == name for item in querying.spec_items(chart.own_query))
+    ]
+    if charts:
+        text += " Charts using it will show a problem: " + ", ".join(f"“{c}”" for c in charts) + "."
     formulas = querying.formulas_using(dataset, name)
     if formulas:
         text += (
@@ -476,20 +657,20 @@ def _tick_choices(workspace, dataset, column: str, picked: list[str], search: st
     return extra + ordered
 
 
-def _table_rows(plan, result) -> list[dict]:
+def _table_rows(result) -> list[dict]:
     """Result rows with each cell's shown text added ("t" + key), formatted once."""
     rows = []
     for record in result.rows:
         row = dict(record)
-        for column in plan.columns:
+        for column in result.columns:
             row["t" + column.key] = querying.format_value(record[column.key], column)
         rows.append(row)
     return rows
 
 
-def _result_table(request, plan, rows: list[dict], draft_id: str) -> RowsTable:
+def _result_table(request, result_columns, rows: list[dict], draft_id: str) -> RowsTable:
     columns = []
-    for column in plan.columns:
+    for column in result_columns:
         if column.is_value:
             kind = querying.kind_class(column.kind)
             table_type = NUMBER if kind == "number" else DATE if kind == "date" else TEXT
@@ -522,7 +703,7 @@ def _result_table(request, plan, rows: list[dict], draft_id: str) -> RowsTable:
         base_url=reverse("my_insights:query_table", args=[draft_id]),
         keep=("draft",),
         push_url=False,
-        search_fields=tuple("t" + column.key for column in plan.columns),
+        search_fields=tuple("t" + column.key for column in result_columns),
         search_placeholder="Search the result",
         noun="rows",
         default_per_page=25,
@@ -548,7 +729,7 @@ def query_table(request, draft_id: str):
     with workspace.lock:
         cache = workspace.query_result_cache
         if cache and cache[0] == draft_id and cache[1] == spec:  # the rows just shown
-            plan, rows = cache[2], cache[3]
+            columns, rows = cache[2], cache[3]
         else:
             dataset = workspace.datasets[spec.dataset_id]
             plan = querying.plan_query(copy.deepcopy(spec), dataset)
@@ -558,8 +739,8 @@ def query_table(request, draft_id: str):
                 result = querying.run_query(workspace.connection, plan, spec.top_n)
             except QueryFailed as error:
                 return HttpResponse(format_html('<p class="text-sm text-error">{}</p>', error))
-            rows = _table_rows(plan, result)
-        table = _result_table(request, plan, rows, draft_id)
+            columns, rows = result.columns, _table_rows(result)
+        table = _result_table(request, columns, rows, draft_id)
     return table_response(
         request,
         table,
@@ -610,13 +791,45 @@ def filter_values(request):
 
 
 @require_POST
+def query_as_dataset(request, query_id: int):
+    """Make a saved query's answer into a dataset, then open a new query on it."""
+    workspace, expired = current_workspace(request)
+    if workspace is None:
+        url = (home_after_expiry() if expired else redirect("my_insights:home")).url
+    else:
+        with workspace.lock:
+            url = _make_query_dataset(workspace, query_id)
+    if request.headers.get("HX-Request") == "true":
+        return HttpResponse(status=204, headers={"HX-Redirect": url})
+    return redirect(url)
+
+
+def _make_query_dataset(workspace, query_id: int) -> str:
+    """Where to go next: a new query on the dataset, or back to the query with a problem."""
+    query_url = reverse("my_insights:query")
+    if query_id not in workspace.queries:
+        return reverse("my_insights:home")
+    existing = next((d for d in workspace.datasets.values() if d.query_id == query_id), None)
+    if existing is not None:  # one per query: it is kept up to date
+        return f"{query_url}?dataset={existing.dataset_id}"
+    try:
+        made = query_dataset.make_query_dataset(workspace, query_id)
+    except QueryDatasetFailed as error:
+        logger.info("Query %s not made into a dataset: %s", query_id, error)
+        workspace.notice = f"This query's answer can't be made into a dataset: {error}"
+        return f"{query_url}?open={query_id}"
+    return f"{query_url}?dataset={made.dataset_id}&made=1"
+
+
+@require_POST
 def query_remove(request, query_id: int):
     workspace, _ = current_workspace(request)
     if workspace is not None:
         with workspace.lock:
-            removed = workspace.queries.pop(query_id, None)
-        if removed is not None:
-            logger.info("Query %s removed", query_id)
+            known = query_id in workspace.queries
+            charts = workspace.remove_query(query_id)
+        if known:
+            logger.info("Query %s removed with: %s", query_id, charts)
     if request.headers.get("HX-Request") == "true" and request.POST.get("from") == "home":
         return panel_response(request, workspace)
     return redirect("my_insights:home")

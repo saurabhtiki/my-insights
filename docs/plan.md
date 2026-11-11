@@ -1,71 +1,96 @@
-# Plan — Phase 3: Build a query
+# Plan — Phase 4.5: Query builder extras (my-insights)
 
-**Status: done (10-11-2026).** 134 tests pass (45 new). Notes at the bottom.
+**Status: done.** 205 tests pass (27 new). Built as planned, with these notes:
+- With Across, the chart and "Use as dataset" use the table's own cells, so Top N and total
+  filters apply to them too (one row per group and across value).
+- The dataset made from a query is called "<query name> (result)" and gets a "Query result" badge.
+- Saving the query copies its answer again. Combined datasets built on it are rebuilt too.
+- "Use as dataset" is refused when the server's memory budget is full (same as an upload).
+- Chart colours made from a date field now go in time order (Apr, May, Jun…).
 
-## Goal (in one line)
-Pick a dataset, drop fields into boxes (Group by, Values, Filters, Sort), see the answer table live.
+## Context
+Phase 3 left 3 query builder items as "Not now": **pivot (across)**, **OR filters**, **query as a
+dataset**. Phase 4 (charts) is done, 178 tests. We build these before Phase 5 (Dashboard) so
+dashboards get them from day one. First build step: copy this plan into `my-insights/docs/plan.md`
+and set "Current phase" in `my-insights/CLAUDE.md` to Phase 4.5.
 
-Example: `Sales` → Group by **Month, Branch** · Values **Sum of Amount, Count of rows** ·
-Filter **Date = this financial year** · Sort **Sum of Amount, biggest first** → a table with
-one row per month and branch, plus a Total row.
+## Goal (one line)
+Spread a field across the top, match "any of" filters, and use a saved query as a new dataset.
 
-## Decisions (agreed)
+Examples:
+- Sum of Amount, Branch down, **Month across** → `Branch | Apr 2026 | May 2026 | … | Total`.
+- Date in FY 2026-27 AND **any of** (Branch = Delhi, Amount > 1,00,000).
+- Save "Top customers" → **Use as dataset** → new query: monthly sales of those customers.
+
+## Decisions
 | # | Decision |
 |---|----------|
-| 1 | Screen: a builder panel on the left (fields, then boxes **Group by**, **Values**, **Filters**, **Sort**; it scrolls on its own) and the result on the right. On small screens the panel slides in with **Edit query**; on big screens drag its edge to resize (remembered; double-click resets). Each filter has **Clear** to empty its picks but keep it. Drag a field in, or click **+** on a box (works on phones). Drag inside a box to reorder. With **Group by** and **Values** both empty, the result lists the matching rows themselves (all fields), e.g. Filter Department is one of IT → every IT row. |
-| 2 | A **query** is a saved question on one dataset (not a new dataset). Many per dataset. Listed on home under its dataset: Open / Edit / Remove. Charts (Phase 4) use queries. |
-| 3 | Values: Sum, Average, Count, Count unique, Min, Max, Median + **Count of rows**. Numbers start as Sum; text/dates as Count unique. |
-| 4 | Date group-by: Day, Week, Month (default), Quarter, Year, Financial year (Apr–Mar), FY quarter. Sorted by time, not A–Z. |
-| 5 | Filters (all must be true — AND): text is one of / is not one of / contains / blank / not blank; number = ≠ > < between blank; date between or quick pick (Today, This month, Last month, This FY, Last FY, Last N days). |
-| 6 | Filters can also use a value total ("Sum of Amount > 1,00,000"). |
-| 7 | Calculated fields by formula: `[Column]`, `+ - * / ( )`, numbers, `ROUND`, `ABS`, `IF`, text join `&`, `YEAR`, `MONTH`, `DAYS_BETWEEN`. Anything else refused, naming it. Divide by 0 → blank. |
-| 8 | The formula box asks **Work it out: Per row / Per group**. Per row: `[Basic] + [DA]` (IF, SWITCH… shown; SUM… hidden). Per group: worked out after grouping, e.g. `SUM([DA]) / SUM([Basic]) * 100`; a clicked field adds `SUM([Field])` (Sum / Average / Count… picker), Values only. Only the chips that fit are shown; a formula that doesn't match is refused with a message. New fields start on Per group when the query has a Group by. |
-| 9 | Live result on every change, up to 100,000 rows, paged (`django-datatable`), **Total** row. No group → one total row; no values → unique groups list. |
-| 10 | Sort by any group or value, A→Z / Z→A, many levels. **Top N**. No sort → group order. |
-| 11 | Indian grouping (12,34,567.89), ₹ and 0–2 decimals per value; averages 2, counts 0. Dates dd-mm-yyyy. |
-| 12 | Removing a dataset removes its queries (confirm lists them). A missing column shows a clear message, not a crash. |
-| 13 | Not now: pivot (across), OR filters, query as a dataset. |
-| 14 | Formula builder: click/drag chips (fields, signs, functions) into the box; typing allowed; live check with examples or "did you mean". |
-| 15 | Calculated fields belong to the dataset and are shared by its queries (ƒ mark). Removing one used by a query asks first. |
-| 16 | **Save** suggests a name ("Sum of Amount by Month, Branch"); warns on leaving unsaved; names unique. |
-| 17 | "Is one of" tick list: top 500 values with counts + search for any value. |
-| 18 | Same column can be a value twice; each value can be renamed. |
-| 19 | Date quick picks are worked out on the day the query runs. |
-| 20 | Blank groups show as **(blank)**, sorted last. |
-| 21 | IF / IFS (else-if) / SWITCH, each with a click form; conditions use AND / OR / NOT. |
+| 1 | **Across zone** under Group by: holds 1 group field (date parts allowed). Its values become columns; each value field makes one column per across value (`Apr 2026 · Sum of Amount`). |
+| 2 | Across is done in Python on the grouped result (no DuckDB PIVOT), so number formats, date labels and order (dates in time order) stay as today. Cap: 50 across columns (shown in a note, extra ones dropped, not merged). |
+| 3 | Totals are **asked from DuckDB, not added up**, so averages and unique counts are right: a Total column (per row: group by down fields only), a totals row per across column (group by across only), and the corner = today's overall total. |
+| 4 | With Across: sort by a value = by its row Total; Top N = top rows by that Total. Applied after the pivot; the SQL runs without the Top N limit. |
+| 5 | Charts keep using the plain (long) result. The across field just becomes an ordinary group, so the chart's auto mapping makes it "Colour by". Saved charts keep working. |
+| 6 | **OR filters: two boxes.** "All of these must match" (AND, today's list) and "Any one of these" (OR). SQL: `all1 AND all2 AND (any1 OR any2)`. Each filter has a ⇄ button to move it to the other box. Each condition is wrapped in its own brackets (fixes the "between" parts). Same 2 boxes for total filters (HAVING). An empty Any box adds nothing. |
+| 7 | **Use as dataset** (button on a saved query): makes a dataset "📋 <query name>" from the query's full result (no 100k preview cap; the 2,000,000 row limit applies). Columns = the result's labels (`Branch`, `Month`, `Sum of Amount`), made unique. Across is ignored here (long form), so the columns don't change when the data does. |
+| 8 | Stored as an in-memory DuckDB table (CTAS with the query's params; views can't hold params). When the query is saved again, the table is rebuilt; if a column it relied on is gone, the existing "missing field" messages show. Memory only, so it's still "no data at rest". |
+| 9 | Removing the query removes its dataset and everything built on it (the confirm lists them). A query-dataset can be joined (Relate) and used for further query-datasets; no loops (a query can't be built on its own dataset). |
+| 10 | Not now: more than 1 across field, nested OR groups, editing a query-dataset's data. |
 
 ## What we build
-1. **Engine (`querying.py`)** — `QuerySpec` (dataset, group-by fields, values, filters, sort, top N,
-   calculated fields). Builds SQL itself from the spec — never runs typed SQL. Quotes every name.
-2. **Formula reader** — calculated fields like `Profit = [Sales] - [Cost]`; only allowed words,
-   columns and operators; clear error naming the bad part.
-3. **Query screen** — field list + zones, HTMX live result (`django-datatable`), name + Save.
-4. **Home / dataset page** — "New query" button, saved queries list, edit / remove.
+1. **Model (`workspace.py`)**
+   - `QuerySpec.across: GroupItem | None`.
+   - `FilterItem.any_of: bool = False`.
+   - `Dataset.query_id: int | None` (the source query).
+   - `dependants()` / `remove_query()` / `remove_dataset()` follow `query_id`.
+2. **SQL (`querying.py`)**
+   - `plan_query`: the across group joins the GROUP BY as key `a0`.
+   - Filters split into all-of / any-of lists for both WHERE and HAVING. `_row_condition` and `_compare` results are wrapped in brackets.
+   - Records mode uses the same split.
+   - New `pivot_result(plan, result, …)`: builds dynamic `plan.columns` (`p{n}_{value key}`) and the rows, and runs the 2 extra totals queries through the existing `run_query`.
+3. **Query as dataset (new `query_dataset.py`)**
+   - `build_query_dataset(workspace, query_id)`: CTAS `ds_{id}`.
+   - Profiles are copied from the plan's column kinds, with blanks and samples via `loading.fill_samples`. Pattern from `linking._build_view`.
+   - Rebuilt from `query_save` when a dataset exists for that query.
+4. **Views (`query_views.py`)**
+   - `_read_form` reads `across_column` / `across_part` and `{key}_any`.
+   - `_apply_action` gets `add_any_filter`, `move_filter` and `set_across` / `clear_across`.
+   - `_result_table` uses the pivoted columns.
+   - New POST `query/<id>/as-dataset/`.
+5. **Templates**
+   - `partials/query_screen.html`: an Across drop zone, the 2 filter boxes with the ⇄ button, and a "Use as dataset" button. Tooltips on all of these.
+   - Dataset lists show "From query <name>" instead of a file name.
+   - Use DaisyUI cards and badges, like the existing zones.
+6. **Docs**: `docs/plan.md`, then the `CLAUDE.md` phase line at the end.
 
-## Tests
-- Each aggregation, date grouping (month, quarter, financial year), each filter type, sort, top N.
-- Formula: good formulas, division by zero, bad input refused with a clear message, no SQL injection.
-- Totals row, no-group (one total row), no-values (distinct list), query on a combined dataset.
-- Removing a dataset removes its queries (confirm lists them). Sessions stay isolated.
+## Reuse
+- `run_query`, `quote_name`, `_row_condition`, `_compare`, `DATE_PARTS`, and `format_value` / `indian_number`.
+- `linking._build_view` (profiles pattern) and `loading.fill_samples`.
+- `django_datatable.RowsTable`, through `_result_table`.
+- `charting.default_chart` / `fit_to_query` (they get the long result, unchanged).
 
-## Not in this phase
-Charts, dashboards, export, AI, recipes.
+## Tests (`tests/test_pivot.py`, `tests/test_or_filters.py`, `tests/test_query_dataset.py`)
+- **Pivot**
+  - Columns per across value × value field.
+  - Date across stays in time order.
+  - The cap of 50 shows a note.
+  - Total column and totals row are right for sum, avg and count unique (not added up).
+  - Sort and Top N work by row total.
+  - The chart still draws with across as Colour by.
+- **OR filters**
+  - all + any SQL is right and has its brackets.
+  - "between" inside OR works.
+  - An empty any box does nothing.
+  - The ⇄ move works, and HAVING any-of works.
+  - Saved queries reload both boxes.
+- **Query as dataset**
+  - The columns and row count match the result.
+  - It works beyond the 100k preview cap.
+  - It rebuilds on query save.
+  - The missing field message shows.
+  - Removing the query cascades (confirm lists it), it can join in Relate, there are no self loops, and sessions are isolated.
+- Older tests all still pass.
 
-## Notes carried from earlier phases
-- DuckDB "block disk access" is off. This phase must build SQL itself, never run user/AI-written SQL.
-- Combined datasets are views; querying them works the same as an uploaded dataset.
-
-## Notes from building (what changed vs. the plan)
-- **Total** is a line under the table (the shared table has no footer row). It covers the rows that
-  pass the filters, and with Top N or a total filter only the groups shown. An average there is
-  the average of all those rows, not of the group averages.
-- Formulas also allow `TODAY()`, `MIN`, `MAX`, `MEDIAN`, `COUNT_UNIQUE` and `TRUE` / `FALSE`.
-  Text comparisons ignore upper / lower case, like Excel. A formula that only uses whole numbers
-  shows no decimals.
-- A calculated field can use other calculated fields; one that uses itself, or that would grow
-  too large, is refused with a message.
-- The "is one of" tick list loads when it is opened (not on every change); ticked values are kept
-  while searching.
-- Result columns with more than 100 different values get a "contains" box instead of a tick list.
-- Sorting / paging the result table reuses the rows just shown (no second run).
-- Drag and drop uses SortableJS (from a CDN, like the other libraries in the fallback base).
+## Verification
+- `uv run pytest`, then ruff.
+- Restart the demo server (`my-insights-demo`, port 8010), load the CSV, build Branch × Month across, add an OR filter, and use as dataset → a new query on it. Screenshot at desktop and phone width.
+- Then `/code-review`, fix what it finds, and update docs/plan.md status and the CLAUDE.md phase line.

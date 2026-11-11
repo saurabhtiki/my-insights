@@ -372,6 +372,8 @@ def save_link(
                 connection, datasets, spec, dataset_id, name, exclude
             )
             for dependant in dependants:  # each after the datasets it is built from
+                if dependant.link is None:
+                    continue  # made from a query: rebuilt after this (query_dataset.py)
                 try:
                     datasets[dependant.dataset_id] = _build_view(
                         connection, datasets, dependant.link, dependant.dataset_id, dependant.name
@@ -427,6 +429,17 @@ def _build_view(connection, datasets, spec, dataset_id, name, exclude=frozenset(
         columns=profiles,
         link=spec,
     )
+
+
+def refresh_view(workspace: Workspace, dataset: Dataset) -> None:
+    """Build a combined dataset's view again after a dataset it uses changed (e.g. a query
+    made into a dataset now has other columns). Keeps its calculated fields. Raises
+    LinkRejected (the dataset is then left as it was)."""
+    rebuilt = _build_view(
+        workspace.connection, workspace.datasets, dataset.link, dataset.dataset_id, dataset.name
+    )
+    dataset.columns, dataset.row_count = rebuilt.columns, rebuilt.row_count
+    dataset.source_file = rebuilt.source_file
 
 
 def preview_rows(connection, sql: str, limit: int) -> list[tuple]:

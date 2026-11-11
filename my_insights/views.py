@@ -18,7 +18,7 @@ from django_datatable import (
     table_response,
 )
 
-from . import conf
+from . import charting, conf
 from .linking import describe_sources
 from .loading import UploadRejected, load_file
 from .uploads import MemoryOnlyUploadHandler
@@ -55,7 +55,12 @@ TABLE_KINDS = {"integer": NUMBER, "number": NUMBER, "date": DATE}
 
 def remove_confirm(workspace, dataset) -> str:
     """The question asked before removing, naming the combined datasets that go with it."""
-    text = f"Remove “{dataset.name}” from memory?"
+    return f"Remove “{dataset.name}” from memory?" + _removed_with(workspace, dataset)
+
+
+def _removed_with(workspace, dataset) -> str:
+    """ " This also removes …": what goes with a dataset ("" when nothing)."""
+    text = ""
     dependants = workspace.dependants(dataset.dataset_id)
     if dependants:
         names = ", ".join(f"“{d.name}”" for d in dependants)
@@ -64,7 +69,39 @@ def remove_confirm(workspace, dataset) -> str:
     if queries:
         names = ", ".join(f"“{q.name}”" for q in queries)
         text += f" Saved queries removed too: {names}."
+    charts = workspace.charts_of([dataset.dataset_id, *(d.dataset_id for d in dependants)])
+    if charts:
+        names = ", ".join(f"“{c.name}”" for c in charts)
+        text += f" Charts removed too: {names}."
     return text
+
+
+def query_remove_confirm(workspace, query) -> str:
+    text = f"Remove the saved query “{query.name}”?"
+    charts = workspace.charts_of_query(query.query_id)
+    if charts:
+        names = ", ".join(f"“{c.name}”" for c in charts)
+        text += f" Its charts are removed too: {names}."
+    for dataset in workspace.datasets.values():
+        if dataset.query_id == query.query_id:
+            text += f" The dataset “{dataset.name}” made from it goes too."
+            text += _removed_with(workspace, dataset)
+    return text
+
+
+def chart_rows(workspace, dataset_ids) -> list[dict]:
+    """Saved charts for a list: each with the query it follows and why it can't draw ("")."""
+    rows = []
+    for chart in workspace.charts_of(dataset_ids):
+        query = workspace.queries.get(chart.query_id) if chart.query_id else None
+        rows.append(
+            {
+                "chart": chart,
+                "query": query,
+                "problem": charting.broken_reason(chart.spec, workspace.chart_query(chart)),
+            }
+        )
+    return rows
 
 
 def page_context(request, workspace, expired: bool, **extra) -> dict:
@@ -95,7 +132,11 @@ def _cards(workspace) -> list[dict]:
         {
             "dataset": dataset,
             "remove_confirm": remove_confirm(workspace, dataset),
-            "queries": workspace.queries_of([dataset.dataset_id]),
+            "queries": [
+                {"query": query, "remove_confirm": query_remove_confirm(workspace, query)}
+                for query in workspace.queries_of([dataset.dataset_id])
+            ],
+            "charts": chart_rows(workspace, [dataset.dataset_id]),
         }
         for dataset in workspace.datasets.values()
     ]
@@ -239,6 +280,7 @@ def _dataset_page(request, workspace, dataset, rename_error: str = "", status: i
         preview_rows=PREVIEW_ROWS,
         remove_confirm=remove_confirm(workspace, dataset),
         queries=workspace.queries_of([dataset.dataset_id]),
+        charts=workspace.charts_of([dataset.dataset_id]),
     )
     response = table_response(
         request,

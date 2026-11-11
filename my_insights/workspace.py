@@ -98,6 +98,7 @@ class FilterItem:
     value_key: str = ""
     op: str = ""
     values: list[str] = field(default_factory=list)
+    any_of: bool = False  # in the "Any one of these" box (OR) instead of "All of these" (AND)
 
 
 @dataclass
@@ -117,6 +118,8 @@ class QuerySpec:
     filters: list[FilterItem] = field(default_factory=list)
     sorts: list[SortItem] = field(default_factory=list)
     top_n: int | None = None
+    # A group whose values become columns ("Across"), e.g. Month → Apr 2026 | May 2026 | …
+    across: GroupItem | None = None
 
 
 @dataclass
@@ -127,14 +130,60 @@ class SavedQuery:
 
 
 @dataclass
+class ValueStyle:
+    """How one value is drawn on a chart. Empty = the chart's default."""
+
+    kind: str = ""  # bar | line (combo charts)
+    axis: str = ""  # left | right
+    color: str = ""  # "#1f77b4"
+
+
+@dataclass
+class ChartSpec:
+    """How to draw a query's result. Fields are the query's own item keys (GroupItem.key,
+    ValueItem.key), so renaming a heading never breaks a chart. Holds no data."""
+
+    chart_type: str = "column"
+    x: str = ""  # a group's key: the X axis (pie: the slices)
+    series: str = ""  # a group's key: one colour per value, e.g. one line per Branch
+    hidden: list[str] = field(default_factory=list)  # value keys left off the chart
+    styles: dict[str, ValueStyle] = field(default_factory=dict)  # value key → style
+    title: str = ""
+    legend: bool = True
+    labels: bool = False  # numbers written on the bars / points
+    x_title: str = ""
+    y_title: str = ""
+    y2_title: str = ""
+    theme: str = "default"
+    sort: str = ""  # "" = the query's order | desc | asc (by the first value)
+    percent: bool = False  # stacked charts: each bar adds up to 100%
+    top_n: int | None = None  # None = the chart type's default (30 bars, 10 slices)
+    # The headings when the chart was last saved, so a missing field can be named.
+    names: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class SavedChart:
+    """A chart on a saved query (`query_id`), or on a dataset with its own hidden query
+    (`own_query`). Exactly one of the two is set."""
+
+    chart_id: int
+    name: str
+    spec: ChartSpec
+    query_id: int | None = None
+    own_query: QuerySpec | None = None
+
+
+@dataclass
 class Dataset:
     dataset_id: int
     name: str
-    table_name: str  # a table for an uploaded file, a view for a combined dataset
-    source_file: str  # file name, or "Sales, Items" for a combined dataset
+    table_name: str  # a table for an uploaded file or a query's result, a view for a combined one
+    source_file: str  # file name, "Sales, Items" for a combined dataset, or the query's name
     row_count: int
     columns: list[ColumnProfile]
     link: LinkSpec | None = None  # set for a combined dataset
+    query_id: int | None = None  # set for a dataset made from a saved query's result
     calculated: list[CalculatedField] = field(default_factory=list)
 
     @property
@@ -168,6 +217,47 @@ class Workspace:
         # The latest result shown: (draft id, spec, plan, rows), so sort / page clicks in its
         # table don't run the query again.
         self.query_result_cache: tuple | None = None  # (dataset ids it was made for, suggestions)
+        self.charts: dict[int, SavedChart] = {}
+        self._next_chart_id = 1
+        self.notice = ""  # a problem to show on the next page (after a redirect)
+
+    def new_chart_id(self) -> int:
+        chart_id = self._next_chart_id
+        self._next_chart_id += 1
+        return chart_id
+
+    def chart_query(self, chart: SavedChart) -> QuerySpec | None:
+        """The question a chart draws: its saved query's, or its own."""
+        if chart.query_id is not None:
+            saved = self.queries.get(chart.query_id)
+            return saved.spec if saved else None
+        return chart.own_query
+
+    def charts_of_query(self, query_id: int) -> list[SavedChart]:
+        return [chart for chart in self.charts.values() if chart.query_id == query_id]
+
+    def charts_of(self, dataset_ids) -> list[SavedChart]:
+        """Every chart drawing from these datasets (through a saved query or its own)."""
+        ids = set(dataset_ids)
+        found = []
+        for chart in self.charts.values():
+            spec = self.chart_query(chart)
+            if spec is not None and spec.dataset_id in ids:
+                found.append(chart)
+        return found
+
+    def remove_query(self, query_id: int) -> list[str]:
+        """Remove a saved query, its charts and any dataset made from it (with everything
+        built on that). Returns the names removed, the query's own name not included."""
+        removed = []
+        for dataset in [d for d in self.datasets.values() if d.query_id == query_id]:
+            if dataset.dataset_id in self.datasets:  # not already gone with an earlier one
+                removed += self.remove_dataset(dataset.dataset_id)
+        charts = self.charts_of_query(query_id)
+        for chart in charts:
+            del self.charts[chart.chart_id]
+        self.queries.pop(query_id, None)
+        return removed + [chart.name for chart in charts]
 
     def new_dataset_id(self) -> int:
         dataset_id = self._next_id
@@ -195,17 +285,27 @@ class Workspace:
             number += 1
         return name
 
+    def sources_of(self, dataset: Dataset) -> list[int]:
+        """The datasets this one is built from: a combined dataset's parts, or the dataset
+        of the query a query-dataset was made from. [] for an uploaded file."""
+        if dataset.link is not None:
+            return dataset.link.source_ids()
+        if dataset.query_id is not None:
+            query = self.queries.get(dataset.query_id)
+            return [query.spec.dataset_id] if query else []
+        return []
+
     def dependants(self, dataset_id: int) -> list[Dataset]:
-        """Combined datasets built (directly or through others) on this one, each listed
-        after the datasets it is built from."""
+        """Datasets built (directly or through others) on this one, combined ones and ones
+        made from a query on it, each listed after the datasets it is built from."""
         found: dict[int, Dataset] = {}
         changed = True
         while changed:
             changed = False
             for dataset in self.datasets.values():
-                if dataset.link is None or dataset.dataset_id in found:
+                if dataset.dataset_id in found or dataset.dataset_id == dataset_id:
                     continue
-                sources = set(dataset.link.source_ids())
+                sources = set(self.sources_of(dataset))
                 if dataset_id in sources or sources & found.keys():
                     found[dataset.dataset_id] = dataset
                     changed = True
@@ -215,20 +315,34 @@ class Workspace:
                 dataset
                 for key, dataset in found.items()
                 if key not in ordered
-                and set(dataset.link.source_ids()) & found.keys() <= ordered.keys()
+                and set(self.sources_of(dataset)) & found.keys() <= ordered.keys()
             ]
-            if not ready:  # a loop; never expected, as the link screen refuses it
-                logger.error("Combined datasets depend on each other: %s", list(found))
+            if not ready:  # a loop; never expected, as the screens refuse it
+                logger.error("Datasets depend on each other: %s", list(found))
                 ready = [dataset for key, dataset in found.items() if key not in ordered]
             ordered.update((dataset.dataset_id, dataset) for dataset in ready)
         return list(ordered.values())
+
+    def built_on_query(self, query_id: int) -> set[int]:
+        """Ids of the datasets made from this query and everything built on them: the
+        query may not ask about any of these (it would be built on itself)."""
+        ids = set()
+        for dataset in self.datasets.values():
+            if dataset.query_id == query_id:
+                ids.add(dataset.dataset_id)
+                ids |= {d.dataset_id for d in self.dependants(dataset.dataset_id)}
+        return ids
 
     def remove_dataset(self, dataset_id: int) -> list[str]:
         """Remove a dataset, every combined dataset built on it and their queries.
         Returns the names removed."""
         removed = [*reversed(self.dependants(dataset_id)), self.datasets[dataset_id]]
-        queries = self.queries_of(dataset.dataset_id for dataset in removed)
+        removed_ids = [dataset.dataset_id for dataset in removed]
+        queries = self.queries_of(removed_ids)
+        charts = self.charts_of(removed_ids)
         self.query_result_cache = None
+        for chart in charts:
+            del self.charts[chart.chart_id]
         for query in queries:
             del self.queries[query.query_id]
         for dataset in removed:
@@ -236,7 +350,11 @@ class Workspace:
             self.connection.execute(f'DROP {kind} IF EXISTS "{dataset.table_name}"')
             del self.datasets[dataset.dataset_id]
         self.refresh_memory()
-        return [dataset.name for dataset in removed] + [query.name for query in queries]
+        return (
+            [dataset.name for dataset in removed]
+            + [query.name for query in queries]
+            + [chart.name for chart in charts]
+        )
 
     def refresh_memory(self) -> None:
         """Re-measure this database's memory. Call while holding `lock`."""

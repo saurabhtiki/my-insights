@@ -1,0 +1,147 @@
+{% comment %}
+The Chart tab's settings, inside the query form. Always posted (hidden on the Table tab), so
+switching tabs keeps them. Every change redraws the chart, like the query boxes.
+{% endcomment %}
+<input type="hidden" name="chart_touched" value="{{ chart_touched|yesno:'1,0' }}">
+<input type="hidden" name="chart_shown_type" value="{{ chart.chart_type }}">
+{% if chart_id %}<input type="hidden" name="chart_id" value="{{ chart_id }}">{% endif %}
+<section class="card card-border bg-base-100 {% if tab != 'chart' %}hidden{% endif %}" aria-label="Chart settings"
+         @change="document.querySelector('#query-form [name=chart_touched]').value = '1'">
+  <div class="card-body gap-3 p-3">
+    <div class="flex items-center justify-between gap-2">
+      <h2 class="card-title text-sm">Chart</h2>
+      {% if chart_saved %}<span class="badge badge-ghost badge-sm truncate" title="{% if chart_saved.query_id %}This chart follows its saved query: change the query and the chart changes too{% else %}This chart keeps its own copy of the query{% endif %}">{% if chart_saved.query_id %}follows query{% else %}own query{% endif %}</span>{% endif %}
+    </div>
+    <input name="chart_name" value="{{ chart_name }}" placeholder="{{ suggested_chart }}" maxlength="100" aria-label="Chart name"
+           class="input input-sm w-full {% if chart_problem %}input-error{% endif %}" title="Chart name. Leave empty to use the suggested name">
+    {% if chart_problem %}<p class="text-xs text-error">{{ chart_problem }}</p>{% endif %}
+    <button type="submit" name="action" value="save_chart" class="btn btn-primary btn-sm"
+            title="{% if chart_saved %}Save the changes to this chart{% else %}Keep this chart so you can open it again (and put it on a dashboard later){% endif %}">
+      {% if chart_saved %}Save chart changes{% else %}Save chart{% endif %}
+    </button>
+
+    {# type #}
+    <fieldset class="fieldset py-0">
+      <legend class="fieldset-legend">Type</legend>
+      <div class="grid grid-cols-2 gap-1">
+        {% for key, label, help in chart_types %}
+        <label class="btn btn-xs justify-start {% if key == chart.chart_type %}btn-primary{% else %}btn-ghost border-base-300{% endif %}" title="{{ help }}">
+          <input type="radio" name="chart_type" value="{{ key }}" class="hidden" {% if key == chart.chart_type %}checked{% endif %}>{{ label }}
+        </label>
+        {% endfor %}
+      </div>
+    </fieldset>
+
+    {# fields #}
+    {% if chart_groups %}
+    <div class="grid grid-cols-2 gap-2">
+      <fieldset class="fieldset py-0">
+        <legend class="fieldset-legend" title="Which Group by field goes along the bottom">{% if chart_round %}Slices{% elif chart.chart_type == "scatter" %}Dot name{% else %}X axis{% endif %}</legend>
+        <select name="chart_x" class="select select-xs w-full" title="{% if chart_round %}One slice for each value of this field{% elif chart.chart_type == 'scatter' %}The name shown on each dot{% else %}One bar / point for each value of this field, e.g. Month{% endif %}">
+          {% for key, label in chart_groups %}<option value="{{ key }}" {% if key == chart.x %}selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
+      </fieldset>
+      <fieldset class="fieldset py-0 {% if chart_round %}hidden{% endif %}">
+        <legend class="fieldset-legend">Colour by</legend>
+        <select name="chart_series" class="select select-xs w-full" title="Split into one colour for each value of this field, e.g. one line per Branch">
+          <option value="">None</option>
+          {% for key, label in chart_groups %}{% if key != chart.x %}<option value="{{ key }}" {% if key == chart.series %}selected{% endif %}>{{ label }}</option>{% endif %}{% endfor %}
+        </select>
+      </fieldset>
+    </div>
+    {% else %}
+    <p class="text-xs text-base-content/60">Put a field in Group by (e.g. Month) and one in Values (e.g. Sum of Amount) below to draw a chart.</p>
+    {% endif %}
+
+    {# values #}
+    {% if chart_values %}
+    <fieldset class="fieldset py-0">
+      <legend class="fieldset-legend" title="Untick a value to leave it off the chart (it stays in the table)">Values</legend>
+      <ul class="space-y-1">
+        {% for v in chart_values %}
+        <li class="flex flex-wrap items-center gap-2 text-sm">
+          <input type="hidden" name="chart_values" value="{{ v.key }}">
+          <input type="hidden" name="{{ v.key }}_cwas" value="{{ v.own.kind }}|{{ v.own.axis }}">
+          <label class="flex min-w-0 flex-1 items-center gap-2" title="Show “{{ v.label }}” on the chart">
+            <input type="checkbox" name="chart_shown" value="{{ v.key }}" class="checkbox checkbox-xs" {% if v.shown %}checked{% endif %}>
+            <span class="truncate">{{ v.label }}</span>
+          </label>
+          {% if chart.chart_type == "combo" %}
+          <select name="{{ v.key }}_ckind" class="select select-xs w-20" title="Draw as bars or a line">
+            <option value="bar" {% if v.style.kind == "bar" %}selected{% endif %}>Bars</option>
+            <option value="line" {% if v.style.kind == "line" %}selected{% endif %}>Line</option>
+          </select>
+          {% else %}<input type="hidden" name="{{ v.key }}_ckind" value="{{ v.style.kind }}">{% endif %}
+          {% if chart_two_axes %}
+          <select name="{{ v.key }}_caxis" class="select select-xs w-20" title="Which side's scale this value uses. Use the right side for a value of a different size, e.g. Margin % next to Sales">
+            <option value="left" {% if v.style.axis != "right" %}selected{% endif %}>Left</option>
+            <option value="right" {% if v.style.axis == "right" %}selected{% endif %}>Right</option>
+          </select>
+          {% else %}<input type="hidden" name="{{ v.key }}_caxis" value="{{ v.style.axis }}">{% endif %}
+          <span class="flex items-center" x-data="{ colour: '{{ v.style.color }}' }">
+            <input type="hidden" name="{{ v.key }}_ccolor" :value="colour" x-ref="colour">
+            <input type="color" :value="colour || '{{ v.auto_colour }}'" class="h-6 w-7 cursor-pointer rounded border border-base-300 bg-transparent" aria-label="Colour of {{ v.label }}"
+                   title="Pick this value's colour{% if chart.series %} (not used while Colour by is set: each colour is one {{ chart_series_label }} value){% endif %}"
+                   @change.stop="colour = $event.target.value; $nextTick(() => $refs.colour.dispatchEvent(new Event('change', { bubbles: true })))">
+            <button type="button" x-show="colour" class="btn btn-ghost btn-xs btn-square" title="Back to the colour set's colour" aria-label="Automatic colour"
+                    @click="colour = ''; $nextTick(() => $refs.colour.dispatchEvent(new Event('change', { bubbles: true })))">↺</button>
+          </span>
+        </li>
+        {% endfor %}
+      </ul>
+    </fieldset>
+    {% endif %}
+
+    {# look #}
+    {# stays open / closed across redraws (remembered in this tab) #}
+    <details class="collapse collapse-arrow border border-base-300 bg-base-100"
+             x-data="{
+               init() { try { this.$el.open = sessionStorage.getItem('myInsightsChartLook') === '1' } catch (error) { /* private window */ } },
+               remember() { try { sessionStorage.setItem('myInsightsChartLook', this.$el.open ? '1' : '0') } catch (error) { /* not remembered */ } },
+             }"
+             @toggle="remember()">
+      <summary class="collapse-title min-h-0 py-2 text-sm font-medium" title="Title, labels, colours, order">Look</summary>
+      <div class="collapse-content space-y-2 text-sm">
+        <input name="chart_title" value="{{ chart.title }}" placeholder="Chart title (optional)" maxlength="100" class="input input-xs w-full" aria-label="Chart title" title="Shown above the chart">
+        {% if chart_axes %}
+        <div class="grid grid-cols-2 gap-2">
+          <input name="chart_x_title" value="{{ chart.x_title }}" placeholder="{% if chart.chart_type == 'scatter' %}Across title{% else %}X axis title{% endif %}" maxlength="60" class="input input-xs w-full" aria-label="X axis title" title="Name written under the bottom axis">
+          <input name="chart_y_title" value="{{ chart.y_title }}" placeholder="{% if chart.chart_type == 'scatter' %}Up title{% else %}Y axis title{% endif %}" maxlength="60" class="input input-xs w-full" aria-label="Y axis title" title="Name written beside the value axis">
+          {% if chart_two_axes %}
+          <input name="chart_y2_title" value="{{ chart.y2_title }}" placeholder="Right axis title" maxlength="60" class="input input-xs col-span-2 w-full" aria-label="Right axis title" title="Name beside the right axis (when a value uses the right side)">
+          {% endif %}
+        </div>
+        {% endif %}
+        <div class="grid grid-cols-2 gap-2">
+          <label class="flex items-center gap-2" title="Show the colour key under the chart">
+            <input type="checkbox" name="chart_legend" value="1" class="toggle toggle-xs" {% if chart.legend %}checked{% endif %}> Legend
+          </label>
+          <label class="flex items-center gap-2" title="Write each number on the chart (pie: the number and its share)">
+            <input type="checkbox" name="chart_labels" value="1" class="toggle toggle-xs" {% if chart.labels %}checked{% endif %}> Numbers on chart
+          </label>
+          {% if chart_stacked %}
+          <label class="col-span-2 flex items-center gap-2" title="Each bar adds up to 100%, showing each part's share instead of the amount">
+            <input type="checkbox" name="chart_percent" value="1" class="toggle toggle-xs" {% if chart.percent %}checked{% endif %}> 100% stacked
+          </label>
+          {% endif %}
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <select name="chart_theme" class="select select-xs w-full" title="The set of colours used">
+            {% for key, label in chart_themes %}<option value="{{ key }}" {% if key == chart.theme %}selected{% endif %}>{{ label }}</option>{% endfor %}
+          </select>
+          {% if chart.chart_type != "scatter" %}
+          <select name="chart_sort" class="select select-xs w-full" title="Order of the bars / slices, by the first value. Query order keeps dates in time order.">
+            {% for key, label in chart_sorts %}<option value="{{ key }}" {% if key == chart.sort %}selected{% endif %}>{{ label }}</option>{% endfor %}
+          </select>
+          {% endif %}
+        </div>
+        {% if chart_capped %}
+        <label class="flex items-center gap-2" title="Only the biggest ones are drawn; the rest are added into “Others” (when they can be added). Empty = {{ chart_default_top }}.">
+          Show top
+          <input name="chart_top_n" value="{{ chart.top_n|default_if_none:'' }}" inputmode="numeric" placeholder="{{ chart_default_top }}" class="input input-xs w-20" aria-label="How many to show">
+        </label>
+        {% endif %}
+      </div>
+    </details>
+  </div>
+</section>

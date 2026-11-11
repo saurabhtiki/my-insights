@@ -16,7 +16,7 @@ from django.urls import reverse
 from django.views.decorators.http import require_GET, require_http_methods
 from django_datatable import table_response
 
-from . import linking
+from . import linking, query_dataset
 from .linking import JOIN_TYPES, LinkRejected
 from .views import PREVIEW_ROWS, home_after_expiry, name_error, page_context, rows_table
 from .workspace import LinkSpec, LinkStep, current_workspace
@@ -74,6 +74,9 @@ def link(request):
                     check.problems.append(str(error))
                 else:
                     workspace.link_drafts.pop(draft_id, None)
+                    # query-datasets built on it hold a copy: copy them again
+                    for problem in query_dataset.refresh_built_on(workspace, dataset.dataset_id):
+                        logger.warning("After a link change: %s", problem)
                     url = reverse("my_insights:dataset", args=[dataset.dataset_id])
                     if request.headers.get("HX-Request") == "true":
                         return HttpResponse(status=204, headers={"HX-Redirect": url})

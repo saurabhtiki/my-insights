@@ -10,6 +10,8 @@ as parameters and formulas come from formula.py. Nothing the user types is run a
       GROUP BY 1, 2 ORDER BY g0 NULLS LAST, g1 NULLS LAST
 """
 
+import copy
+import dataclasses
 import logging
 import math
 import re
@@ -31,6 +33,7 @@ MAX_TICK_VALUES = 500
 MAX_SEARCH_VALUES = 50
 MAX_NAME_LENGTH = 100
 MAX_FIELD_NAME_LENGTH = 60
+MAX_ACROSS = 50  # columns made by an Across field (each value field makes one per value)
 
 # key: (label, SQL template, kinds it works on — None = any)
 AGGREGATIONS = {
@@ -154,6 +157,13 @@ class QueryPlan:
     params: list = field(default_factory=list)
     total_sql: str = ""
     total_params: list = field(default_factory=list)
+    # Across: the field spread into columns, the cells (groups + across + values) and the
+    # totals of each across column. Worked out by DuckDB, so averages are right too.
+    across: ResultColumn | None = None
+    cell_sql: str = ""
+    cell_params: list = field(default_factory=list)
+    across_total_sql: str = ""
+    across_total_params: list = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -165,6 +175,11 @@ class QueryResult:
     rows: list[dict]
     totals: dict | None  # value key → total over the groups shown
     truncated: bool  # more rows than the cap
+    columns: list[ResultColumn] = field(default_factory=list)  # as shown (Across adds some)
+    notes: list[str] = field(default_factory=list)
+    # Across: one row per group and across value, keyed like a plan of long_spec(spec)
+    # (the across field is the last g key). The chart draws these.
+    long_rows: list[dict] = field(default_factory=list)
 
 
 # ---------- fields ----------
@@ -252,27 +267,64 @@ def default_name(spec: QuerySpec, dataset, catalog: dict | None = None) -> str:
 # ---------- building the SQL ----------
 
 
+def long_spec(spec: QuerySpec) -> QuerySpec:
+    """The query with its Across field as one more Group by field: the columns of a chart's
+    rows (QueryResult.long_rows, which keep Top N and total filters per row)."""
+    spec = copy.deepcopy(spec)
+    if spec.across is not None:
+        spec.groups.append(spec.across)
+        spec.across = None
+    return spec
+
+
+def _group_sql(item, key: str, catalog: dict, dataset, plan: QueryPlan, box: str):
+    """(SQL, result column) of a Group by / Across field, or None (problem reported)."""
+    info = _usable(item.column, catalog, dataset, plan, box)
+    if info is None:
+        return None
+    sql, kind, part = info.sql, info.kind, ""
+    if info.kind_class == "date":
+        part = item.date_part if item.date_part in DATE_PARTS else "month"
+        sql = DATE_PARTS[part][1].format(info.sql)
+        kind = "date" if part != "year" and part != "fy" else "integer"
+    return sql, ResultColumn(key, group_label(item, catalog), kind, part)
+
+
+def _combine(all_of: list, any_of: list) -> tuple[str, list]:
+    """[(sql, params)] → "(a) AND (b) AND ((c) OR (d))" and its params, in the same order."""
+    parts = [f"({sql})" for sql, _ in all_of]
+    params = [param for _, values in all_of for param in values]
+    if any_of:
+        parts.append("(" + " OR ".join(f"({sql})" for sql, _ in any_of) + ")")
+        params += [param for _, values in any_of for param in values]
+    return " AND ".join(parts), params
+
+
 def plan_query(
-    spec: QuerySpec, dataset, today: date | None = None, catalog: dict | None = None
+    spec: QuerySpec,
+    dataset,
+    today: date | None = None,
+    catalog: dict | None = None,
+    cap: int | None = None,
 ) -> QueryPlan:
-    """The SQL for a query, or the problems that stop it from running."""
+    """The SQL for a query, or the problems that stop it from running. `cap`: the most rows
+    to return (default: the preview cap)."""
     today = today or timezone.localdate()
     catalog = catalog if catalog is not None else field_catalog(dataset)
     plan = QueryPlan()
+    cap = cap or row_cap()
 
     groups = []  # (key, sql)
     for index, item in enumerate(spec.groups):
-        info = _usable(item.column, catalog, dataset, plan, "Group by")
-        if info is None:
-            continue
-        sql, kind, part = info.sql, info.kind, ""
-        if info.kind_class == "date":
-            part = item.date_part if item.date_part in DATE_PARTS else "month"
-            sql = DATE_PARTS[part][1].format(info.sql)
-            kind = "date" if part != "year" and part != "fy" else "integer"
-        key = f"g{index}"
-        groups.append((key, sql))
-        plan.columns.append(ResultColumn(key, group_label(item, catalog), kind, part))
+        built = _group_sql(item, f"g{index}", catalog, dataset, plan, "Group by")
+        if built is not None:
+            groups.append((built[1].key, built[0]))
+            plan.columns.append(built[1])
+    across_sql = ""
+    if spec.across is not None:
+        built = _group_sql(spec.across, "a0", catalog, dataset, plan, "Across")
+        if built is not None:
+            across_sql, plan.across = built
 
     values = []  # (key, sql)
     value_sql_by_key = {}
@@ -291,8 +343,9 @@ def plan_query(
             ResultColumn(key, value_label(item, catalog), kind, "", number_format, True)
         )
 
-    where, where_params = [], []
-    having, having_params = [], []
+    # {False: "All of these" (AND), True: "Any one of these" (OR)} → [(sql, params)]
+    where_parts: dict[bool, list] = {False: [], True: []}
+    having_parts: dict[bool, list] = {False: [], True: []}
     for item in spec.filters:
         if item.value_key:
             target = value_sql_by_key.get(item.value_key)
@@ -300,30 +353,34 @@ def plan_query(
                 continue  # its value was removed or has a problem (already reported)
             built = _total_condition(item, target[1], plan)
             if built:
-                having.append(built[0])
-                having_params += built[1]
+                having_parts[item.any_of].append(built)
             continue
         info = _usable(item.column, catalog, dataset, plan, "Filters")
         if info is None:
             continue
         built = _row_condition(item, info, today, plan)
         if built:
-            where.append(built[0])
-            where_params += built[1]
+            where_parts[item.any_of].append(built)
+    where, where_params = _combine(where_parts[False], where_parts[True])
+    having, having_params = _combine(having_parts[False], having_parts[True])
 
     if plan.problems:
         return plan
+    if plan.across is not None and not values:
+        plan.notes.append("Across needs a value (e.g. Sum of Amount) to spread into columns.")
+        plan.across, across_sql = None, ""
     if not groups and not values:
-        return _records_plan(plan, catalog, dataset, where, where_params, spec.top_n)
+        return _records_plan(plan, catalog, dataset, where, where_params, spec.top_n, cap)
 
     select = ", ".join(f"{sql} AS {key}" for key, sql in groups + values)
-    sql = f"SELECT {'DISTINCT ' if not values else ''}{select} FROM {quote_name(dataset.table_name)} AS src"
+    source = f"{quote_name(dataset.table_name)} AS src"
+    sql = f"SELECT {'DISTINCT ' if not values else ''}{select} FROM {source}"
     if where:
-        sql += " WHERE " + " AND ".join(where)
+        sql += " WHERE " + where
     if groups and values:
         sql += " GROUP BY " + ", ".join(str(n) for n in range(1, len(groups) + 1))
     if having:
-        sql += " HAVING " + " AND ".join(having)
+        sql += " HAVING " + having
 
     order = []
     keys_by_item = {item.key: f"g{i}" for i, item in enumerate(spec.groups)}
@@ -339,31 +396,43 @@ def plan_query(
     if order:
         outer += " ORDER BY " + ", ".join(order)
     plan.params = where_params + having_params
-    cap = row_cap()
     limit = min(spec.top_n, cap) if spec.top_n else cap + 1  # +1 tells us there are more
     plan.sql = f"{outer} LIMIT {int(limit)}"
+    if not values:
+        return plan
 
-    if groups and values:  # the Total row: over the groups shown
-        totals = ", ".join(f"{sql} AS {key}" for key, sql in values)
-        source = f"{quote_name(dataset.table_name)} AS src"
-        conditions = list(where)
-        params = list(where_params)
-        if spec.top_n or having:
-            match = " AND ".join(
-                f"shown.{key} IS NOT DISTINCT FROM ({gsql})" for key, gsql in groups
-            )
-            conditions.append(f"EXISTS (SELECT 1 FROM shown WHERE {match})")
-            plan.total_sql = f"WITH shown AS ({plan.sql}) SELECT {totals} FROM {source}"
-            params = plan.params + params
-        else:
-            plan.total_sql = f"SELECT {totals} FROM {source}"
-        if conditions:
-            plan.total_sql += " WHERE " + " AND ".join(conditions)
+    # The Total row (and the Across cells): over the rows that pass the filters, in the
+    # groups shown (Top N and total filters leave some groups out).
+    conditions = [where] if where else []
+    params = list(where_params)
+    prefix = ""
+    if groups and (spec.top_n or having):
+        match = " AND ".join(f"shown.{key} IS NOT DISTINCT FROM ({gsql})" for key, gsql in groups)
+        conditions.append(f"EXISTS (SELECT 1 FROM shown WHERE {match})")
+        prefix = f"WITH shown AS ({plan.sql}) "
+        params = plan.params + params
+    total_where = " WHERE " + " AND ".join(conditions) if conditions else ""
+    totals = ", ".join(f"{sql} AS {key}" for key, sql in values)
+    if groups:
+        plan.total_sql = f"{prefix}SELECT {totals} FROM {source}{total_where}"
         plan.total_params = params
+    if plan.across is not None:
+        cells = ", ".join(f"{sql} AS {key}" for key, sql in [*groups, ("a0", across_sql), *values])
+        numbers = ", ".join(str(n) for n in range(1, len(groups) + 2))
+        plan.cell_sql = (
+            f"{prefix}SELECT {cells} FROM {source}{total_where} GROUP BY {numbers} "
+            f"ORDER BY {numbers.replace(',', ' NULLS LAST,')} NULLS LAST LIMIT {int(cap) + 1}"
+        )
+        plan.cell_params = params
+        plan.across_total_sql = (
+            f"{prefix}SELECT {across_sql} AS a0, {totals} FROM {source}{total_where} "
+            "GROUP BY 1 ORDER BY 1 NULLS LAST"
+        )
+        plan.across_total_params = params
     return plan
 
 
-def _records_plan(plan, catalog, dataset, where, where_params, top_n) -> QueryPlan:
+def _records_plan(plan, catalog, dataset, where, where_params, top_n, cap) -> QueryPlan:
     """No Group by and no Values: the matching records themselves, every field, in file order.
     e.g. Filter Department is one of IT → each IT row, not a total."""
     fields = [info for info in catalog.values() if not info.error and not info.is_total]
@@ -372,8 +441,7 @@ def _records_plan(plan, catalog, dataset, where, where_params, top_n) -> QueryPl
         plan.columns.append(ResultColumn(f"c{index}", info.name, info.kind))
     sql = f"SELECT {select} FROM {quote_name(dataset.table_name)} AS src"
     if where:
-        sql += " WHERE " + " AND ".join(where)
-    cap = row_cap()
+        sql += " WHERE " + where
     limit = min(top_n, cap) if top_n else cap + 1  # +1 tells us there are more
     plan.sql = f"{sql} LIMIT {int(limit)}"
     plan.params = where_params
@@ -583,14 +651,9 @@ class QueryFailed(Exception):
     """The query could not run; the message is safe to show."""
 
 
-def run_query(connection, plan: QueryPlan, top_n: int | None = None) -> QueryResult:
+def _fetch(connection, sql: str, params: list) -> list[tuple]:
     try:
-        records = connection.execute(plan.sql, plan.params).fetchall()
-        totals = None
-        if plan.total_sql:
-            total_record = connection.execute(plan.total_sql, plan.total_params).fetchall()[0]
-            value_keys = [column.key for column in plan.columns if column.is_value]
-            totals = dict(zip(value_keys, total_record, strict=True))
+        return connection.execute(sql, params).fetchall()
     except duckdb.OutOfMemoryException as error:
         logger.warning("Out of memory running a query: %s", error)
         raise QueryFailed("This query needs more memory than allowed per user.") from error
@@ -599,11 +662,73 @@ def run_query(connection, plan: QueryPlan, top_n: int | None = None) -> QueryRes
         raise QueryFailed(
             f"The query could not be worked out on this data ({_short(error)})."
         ) from error
+
+
+def run_query(connection, plan: QueryPlan, top_n: int | None = None) -> QueryResult:
+    """Run a planned query. With an Across field, the result is spread into columns."""
+    records = _fetch(connection, plan.sql, plan.params)
+    totals = None
+    if plan.total_sql:
+        total_record = _fetch(connection, plan.total_sql, plan.total_params)[0]
+        value_keys = [column.key for column in plan.columns if column.is_value]
+        totals = dict(zip(value_keys, total_record, strict=True))
     cap = row_cap()
     truncated = not top_n and len(records) > cap
     keys = [column.key for column in plan.columns]
     rows = [dict(zip(keys, record, strict=True)) for record in records[:cap]]
-    return QueryResult(rows, totals, truncated)
+    result = QueryResult(rows, totals, truncated, list(plan.columns))
+    if plan.across is not None:
+        _spread_across(connection, plan, result)
+    return result
+
+
+def _spread_across(connection, plan: QueryPlan, result: QueryResult) -> None:
+    """Across: one column per across value and value field, plus a Total column per value,
+    e.g. Branch | Apr 2026 | May 2026 | Total. Every total is asked of DuckDB (not added up
+    here), so an Average's total is the average of the rows, not of the cells."""
+    group_columns = [column for column in plan.columns if not column.is_value]
+    value_columns = [column for column in plan.columns if column.is_value]
+    across_totals = _fetch(connection, plan.across_total_sql, plan.across_total_params)
+    cells = _fetch(connection, plan.cell_sql, plan.cell_params)
+    count = len(group_columns)
+    if len(cells) > row_cap():
+        result.truncated = True
+        cells = cells[: row_cap()]
+    found = {(record[:count], record[count]): record[count + 1 :] for record in cells}
+    long_keys = [*(column.key for column in group_columns), f"g{count}"]
+    long_keys += [column.key for column in value_columns]
+    result.long_rows = [dict(zip(long_keys, record, strict=True)) for record in cells]
+    if not group_columns and not result.rows:  # a total filter left nothing
+        across_totals = []
+    if len(across_totals) > MAX_ACROSS:
+        result.notes.append(
+            f"{plan.across.label} has {len(across_totals):,} different values: showing the "
+            f"first {MAX_ACROSS} as columns. Add a filter to see the others."
+        )
+        across_totals = across_totals[:MAX_ACROSS]
+    single = len(value_columns) == 1
+    spread, totals = [], dict(result.totals or {})
+    if not group_columns and result.rows:  # one row: it is its own total
+        totals |= {column.key: result.rows[0][column.key] for column in value_columns}
+    for index, (across_value, *across_total) in enumerate(across_totals):
+        heading = format_value(across_value, plan.across)
+        for position, column in enumerate(value_columns):
+            key = f"p{index}{column.key}"
+            label = heading if single else f"{heading} · {column.label}"
+            spread.append(dataclasses.replace(column, key=key, label=label))
+            totals[key] = across_total[position]
+    for row in result.rows:
+        groups = tuple(row[column.key] for column in group_columns)
+        for index, (across_value, *_) in enumerate(across_totals):
+            cell = found.get((groups, across_value))
+            for position, column in enumerate(value_columns):
+                row[f"p{index}{column.key}"] = cell[position] if cell else None
+    total_columns = [
+        dataclasses.replace(column, label="Total" if single else f"Total · {column.label}")
+        for column in value_columns
+    ]
+    result.columns = group_columns + spread + total_columns
+    result.totals = totals
 
 
 def _short(error: Exception) -> str:
@@ -802,13 +927,20 @@ def _rename_field(workspace, dataset, old: str, new: str) -> None:
         calc.formula = pattern.sub(lambda _: replacement, calc.formula)
     for query in workspace.queries_of([dataset.dataset_id]):
         rename_in_spec(query.spec, old, new)
-    for draft in workspace.query_drafts.values():
+    own_queries = [chart.own_query for chart in workspace.charts.values() if chart.own_query]
+    for draft in [*workspace.query_drafts.values(), *own_queries]:
         if draft.dataset_id == dataset.dataset_id:
             rename_in_spec(draft, old, new)
 
 
+def spec_items(spec: QuerySpec) -> list:
+    """Every item that names a field: Group by, Across, Values and Filters."""
+    across = [spec.across] if spec.across is not None else []
+    return [*spec.groups, *across, *spec.values, *spec.filters]
+
+
 def rename_in_spec(spec: QuerySpec, old: str, new: str) -> None:
-    for item in [*spec.groups, *spec.values, *spec.filters]:
+    for item in spec_items(spec):
         if item.column == old:
             item.column = new
 
@@ -817,7 +949,7 @@ def queries_using(workspace, dataset, name: str) -> list[SavedQuery]:
     used = []
     for query in workspace.queries_of([dataset.dataset_id]):
         spec = query.spec
-        if any(item.column == name for item in [*spec.groups, *spec.values, *spec.filters]):
+        if any(item.column == name for item in spec_items(spec)):
             used.append(query)
     return used
 

@@ -9,7 +9,7 @@ view) and the result on the right. On a small screen the panel slides in from th
 <div x-show="panelOpen" x-transition.opacity class="fixed inset-0 z-40 bg-black/40 lg:hidden" @click="closePanel()" aria-hidden="true"></div>
 <form id="query-form" method="post" action="{% url 'my_insights:query' %}"
       hx-post="{% url 'my_insights:query' %}"
-      hx-trigger="change[!target.closest('[data-hold]') && target.name != 'name'], submit"
+      hx-trigger="change[!target.closest('[data-hold]') && target.name != 'name' && target.name != 'chart_name'], submit"
       hx-target="#query-screen" hx-swap="outerHTML" hx-sync="this:replace" hx-indicator="#query-busy"
       aria-label="Query builder"
       :data-open="panelOpen" {# not :class: htmx resets class on swap #}
@@ -22,6 +22,7 @@ view) and the result on the right. On a small screen the panel slides in from th
   <input type="hidden" name="drop_action" value="">
   <input type="hidden" name="dirty" value="{{ dirty|yesno:'1,0' }}">
   {% if query_id %}<input type="hidden" name="query_id" value="{{ query_id }}">{% endif %}
+  <input type="hidden" name="tab" value="{{ tab }}">
 
   {# ---------- save bar ---------- #}
   <section class="card card-border bg-base-100">
@@ -44,10 +45,21 @@ view) and the result on the right. On a small screen the panel slides in from th
           {% if saved %}Save changes{% else %}Save query{% endif %}
         </button>
         <button type="submit" name="action" value="clear" class="btn btn-ghost btn-sm"
-                title="Empty all four boxes and start again">Clear boxes</button>
+                title="Empty all the boxes and start again">Clear boxes</button>
       </div>
+      {% if saved %}
+      {% for made in query_datasets %}
+      <a href="{% url 'my_insights:query' %}?dataset={{ made.dataset_id }}" class="btn btn-ghost btn-xs justify-start"
+         title="This query's answer is kept as the dataset “{{ made.name }}” (updated each time you save the query). Click to ask a new question about it.">⇢ New query on “{{ made.name }}”</a>
+      {% empty %}
+      <button type="button" class="btn btn-ghost btn-xs justify-start" hx-post="{% url 'my_insights:query_as_dataset' saved.query_id %}" hx-swap="none"
+              title="Keep this query's saved answer as a new dataset, then ask another question about it, e.g. Top customers → their monthly sales. It is updated each time you save the query.">⇢ Use the answer as a dataset</button>
+      {% endfor %}
+      {% endif %}
     </div>
   </section>
+
+  {% include "my_insights/partials/chart_panel.html" %}
 
   <div class="space-y-3">
     {# ---------- field list ---------- #}
@@ -122,6 +134,28 @@ view) and the result on the right. On a small screen the panel slides in from th
             <li class="p-2 text-xs text-base-content/50">Drag a field here. Example: Branch → one row per branch.</li>
             {% endfor %}
           </ul>
+          <div class="flex items-center justify-between gap-2">
+            <h3 class="text-xs font-semibold text-base-content/70" title="Spread one field's values into columns, e.g. Month → Apr 2026 | May 2026 | … with a Total column at the end">Across (columns)</h3>
+            {% include "my_insights/partials/query_add_menu.html" with zone="across" title="Pick the field to spread into columns (one only)" %}
+          </div>
+          <ul data-zone="across" class="min-h-10 space-y-2 rounded-box border border-dashed border-base-300 p-2">
+            {% if across %}
+            <li data-item class="flex items-center gap-2 rounded-field bg-base-200 px-2 py-1 text-sm">
+              <input type="hidden" name="across" value="{{ across.item.key }}">
+              <input type="hidden" name="{{ across.item.key }}_column" value="{{ across.item.column }}">
+              <span class="badge badge-ghost badge-sm" title="Its values become columns" aria-hidden="true">⇥</span>
+              <span class="min-w-0 flex-1 truncate font-medium {% if not across.info %}text-error{% endif %}" title="{{ across.item.column }}">{{ across.item.column }}</span>
+              {% if across.parts %}
+              <select name="{{ across.item.key }}_part" class="select select-xs w-36" title="How to group the dates into columns, e.g. Month → Apr 2026 | May 2026">
+                {% for key, label in across.parts %}<option value="{{ key }}" {% if key == across.item.date_part %}selected{% endif %}>{{ label }}</option>{% endfor %}
+              </select>
+              {% endif %}
+              <button type="submit" name="action" value="remove:{{ across.item.key }}" class="btn btn-ghost btn-xs btn-square" title="Stop spreading into columns" aria-label="Remove">✕</button>
+            </li>
+            {% else %}
+            <li class="p-2 text-xs text-base-content/50">Optional. Drag a field here to turn its values into columns, e.g. Month → Apr | May | Jun.</li>
+            {% endif %}
+          </ul>
         </div>
       </section>
 
@@ -167,77 +201,30 @@ view) and the result on the right. On a small screen the panel slides in from th
         </div>
       </section>
 
-      {# Filters #}
+      {# Filters: "All of these" (AND) and "Any one of these" (OR) #}
       <section class="card card-border bg-base-100">
         <div class="card-body gap-2 p-3">
+          <h2 class="card-title text-sm" title="Keep only the rows that pass the filters. Example: Date this FY, and Branch is Delhi OR Amount over 1,00,000.">Filters</h2>
           <div class="flex items-center justify-between gap-2">
-            <h2 class="card-title text-sm" title="Keep only rows that pass every filter (all must be true)">Filters</h2>
-            {% include "my_insights/partials/query_add_menu.html" with zone="filter" title="Add a filter" %}
+            <h3 class="text-xs font-semibold text-base-content/70" title="Every filter here must be true (AND)">All of these must match</h3>
+            {% include "my_insights/partials/query_add_menu.html" with zone="filter" title="Add a filter that must always be true" %}
           </div>
           <ul data-zone="filter" class="min-h-14 space-y-2 rounded-box border border-dashed border-base-300 p-2">
             {% for f in filters %}
-            {% with key=f.item.key %}
-            <li data-item class="flex flex-wrap items-center gap-2 rounded-field bg-base-200 px-2 py-1 text-sm">
-              <input type="hidden" name="filters" value="{{ key }}">
-              <input type="hidden" name="{{ key }}_column" value="{{ f.item.column }}">
-              <input type="hidden" name="{{ key }}_value_key" value="{{ f.item.value_key }}">
-              <span data-handle class="cursor-grab select-none text-base-content/50" title="Drag to change the order">⠿</span>
-              <span class="min-w-0 truncate font-medium {% if not f.ops %}text-error{% endif %}"
-                    title="{% if f.item.value_key %}A filter on the total of each group{% else %}{{ f.label }}{% endif %}">{% if f.item.value_key %}Total: {% endif %}{{ f.label }}</span>
-              {% if f.ops %}
-              <select name="{{ key }}_op" class="select select-xs w-40" title="The kind of test">
-                {% for op, label in f.ops %}<option value="{{ op }}" {% if op == f.item.op %}selected{% endif %}>{{ label }}</option>{% endfor %}
-              </select>
-              {% endif %}
-              <span class="flex-1"></span>
-              {% if f.picked_count or f.a or f.b %}
-              <button type="submit" name="action" value="clear_filter:{{ key }}" class="btn btn-ghost btn-xs"
-                      title="Empty what you picked or typed (untick all), but keep this filter to fill again">Clear</button>
-              {% endif %}
-              <button type="submit" name="action" value="remove:{{ key }}" class="btn btn-ghost btn-xs btn-square" title="Remove this filter" aria-label="Remove">✕</button>
-              {# the values to test, on their own line (hidden when the test needs none, e.g. "is blank") #}
-              <div class="hidden basis-full flex-wrap items-center gap-2 pb-1 has-[*]:flex">
-              {% if not f.ops %}
-              {% elif f.item.op == "in" or f.item.op == "not_in" %}
-              <div class="dropdown w-full" data-hold>
-                <div tabindex="0" role="button" class="btn btn-xs"
-                     hx-get="{% url 'my_insights:filter_values' %}?dataset={{ dataset.dataset_id }}&key={{ key }}&column={{ f.item.column|urlencode }}"
-                     hx-trigger="focus once" hx-target="#ticks-{{ key }}" hx-swap="innerHTML" hx-include="#ticks-{{ key }}"
-                     title="Tick the values to {% if f.item.op == 'in' %}keep{% else %}leave out{% endif %}">
-                  {% if f.picked_count %}{{ f.picked_count }} ticked{% else %}Choose values{% endif %} ▾</div>
-                <div tabindex="0" class="dropdown-content z-30 mt-1 w-full space-y-2 rounded-box border border-base-300 bg-base-100 p-3 shadow-lg">
-                  <input type="search" name="q" placeholder="Search any value" class="input input-sm w-full" aria-label="Search values"
-                         hx-get="{% url 'my_insights:filter_values' %}?dataset={{ dataset.dataset_id }}&key={{ key }}&column={{ f.item.column|urlencode }}"
-                         hx-trigger="input changed delay:300ms" hx-target="#ticks-{{ key }}" hx-swap="innerHTML" hx-include="#ticks-{{ key }}" hx-sync="this:replace"
-                         @keydown.enter.prevent>
-                  <div id="ticks-{{ key }}" class="max-h-60 overflow-y-auto">
-                    {% include "my_insights/partials/tick_list.html" with choices=f.choices %}
-                  </div>
-                  <p class="text-xs text-base-content/60">Shows the 500 most common values; search finds any.</p>
-                  <button type="submit" class="btn btn-primary btn-sm w-full" title="Use the ticked values">Apply</button>
-                </div>
-              </div>
-              {% elif f.item.op == "contains" %}
-              <input name="{{ key }}_a" value="{{ f.a }}" placeholder="text" class="input input-xs w-32" aria-label="Text to look for">
-              {% elif f.item.op == "between" and f.kind == "date" %}
-              <input type="date" name="{{ key }}_a" value="{{ f.a }}" class="input input-xs w-36" title="From (leave empty for no start)" aria-label="From">
-              <span class="text-base-content/60">to</span>
-              <input type="date" name="{{ key }}_b" value="{{ f.b }}" class="input input-xs w-36" title="To (leave empty for no end)" aria-label="To">
-              {% elif f.item.op == "between" %}
-              <input name="{{ key }}_a" value="{{ f.a }}" inputmode="decimal" placeholder="from" class="input input-xs w-24" aria-label="From">
-              <span class="text-base-content/60">and</span>
-              <input name="{{ key }}_b" value="{{ f.b }}" inputmode="decimal" placeholder="to" class="input input-xs w-24" aria-label="To">
-              {% elif f.item.op == "last_days" %}
-              <input name="{{ key }}_a" value="{{ f.a }}" inputmode="numeric" placeholder="30" class="input input-xs w-20" aria-label="Number of days">
-              <span class="text-base-content/60">days</span>
-              {% elif f.item.op in "eq ne gt lt" %}
-              <input name="{{ key }}_a" value="{{ f.a }}" inputmode="decimal" placeholder="e.g. 1,00,000" class="input input-xs w-28" aria-label="Number">
-              {% endif %}
-              </div>
-            </li>
-            {% endwith %}
+            {% include "my_insights/partials/query_filter_row.html" %}
             {% empty %}
             <li class="p-2 text-xs text-base-content/50">Drag a field here. Example: Date → this financial year.</li>
+            {% endfor %}
+          </ul>
+          <div class="flex items-center justify-between gap-2">
+            <h3 class="text-xs font-semibold text-base-content/70" title="At least one filter here must be true (OR). Example: Branch is Delhi OR Amount over 1,00,000 keeps the rows that pass either test.">Any one of these</h3>
+            {% include "my_insights/partials/query_add_menu.html" with zone="any_filter" title="Add a filter where passing any one is enough (OR)" %}
+          </div>
+          <ul data-zone="any_filter" class="min-h-14 space-y-2 rounded-box border border-dashed border-secondary/40 p-2">
+            {% for f in any_filters %}
+            {% include "my_insights/partials/query_filter_row.html" %}
+            {% empty %}
+            <li class="p-2 text-xs text-base-content/50">Optional. Drag fields here when passing any one test is enough, e.g. Branch is Delhi OR Amount &gt; 1,00,000.</li>
             {% endfor %}
           </ul>
         </div>
@@ -297,9 +284,12 @@ view) and the result on the right. On a small screen the panel slides in from th
 {# ---------- right side: notice, problems and result ---------- #}
 <div class="min-w-0 space-y-4">
 <button type="button" class="btn btn-primary btn-sm lg:hidden" @click="openPanel()"
-        title="Open the builder: fields, Group by, Values, Filters and Sort">✎ Edit query</button>
+        title="Open the builder: fields, Group by, Values, Filters and Sort{% if tab == 'chart' %}, and the chart settings{% endif %}">✎ Edit {% if tab == "chart" %}chart{% else %}query{% endif %}</button>
 {% if notice %}
 <div role="status" class="alert alert-soft alert-success"><span>{{ notice }}</span></div>
+{% endif %}
+{% if problem_notice %}
+<div role="alert" class="alert alert-soft alert-warning"><span>{{ problem_notice }}</span></div>
 {% endif %}
 {% if plan.problems %}
 <div role="alert" class="alert alert-soft alert-error items-start">
@@ -312,7 +302,36 @@ view) and the result on the right. On a small screen the panel slides in from th
 </div>
 {% endif %}
 
-{% if table %}
+<div role="tablist" class="tabs tabs-box w-fit" aria-label="Show the result as">
+  <button type="button" role="tab" class="tab {% if tab == 'table' %}tab-active{% endif %}" aria-selected="{% if tab == 'table' %}true{% else %}false{% endif %}"
+          title="See the answer as rows and columns" @click="showTab('table')">▤ Table</button>
+  <button type="button" role="tab" class="tab {% if tab == 'chart' %}tab-active{% endif %}" aria-selected="{% if tab == 'chart' %}true{% else %}false{% endif %}"
+          title="Draw the answer as a chart: bars, lines, pie…" @click="showTab('chart')">📊 Chart</button>
+</div>
+
+{% if tab == "chart" %}
+{# the saved charts of this query (or of this dataset's own-copy charts), one click apart #}
+<nav aria-label="Saved charts" class="flex flex-wrap items-center gap-2">
+  <div class="hidden flex-wrap gap-1 sm:flex">
+    {% for item in chart_siblings %}
+    <a href="?chart={{ item.chart_id }}" class="btn btn-sm {% if item.chart_id == chart_id %}btn-primary{% else %}btn-ghost border-base-300{% endif %} max-w-56"
+       title="{% if item.chart_id == chart_id %}The chart you are editing{% else %}Open the chart “{{ item.name }}” (unsaved changes here are asked about first){% endif %}"
+       {% if item.chart_id == chart_id %}aria-current="page"{% endif %}><span class="truncate">{{ item.name }}</span></a>
+    {% endfor %}
+    <a href="{{ new_chart_url }}" class="btn btn-sm {% if not chart_id %}btn-primary{% else %}btn-ghost border-dashed border-base-300{% endif %}"
+       title="Start another chart on this {% if query_id %}query{% else %}dataset{% endif %}. Each chart is saved on its own, so you can put any of them on a dashboard"
+       {% if not chart_id %}aria-current="page"{% endif %}>+ New chart</a>
+  </div>
+  {% if chart_siblings %}
+  <select class="select select-sm w-full sm:hidden" aria-label="Pick a saved chart" title="Open another saved chart, or start a new one"
+          @change="window.location.href = $event.target.value">
+    {% for item in chart_siblings %}<option value="?chart={{ item.chart_id }}" {% if item.chart_id == chart_id %}selected{% endif %}>{{ item.name }}</option>{% endfor %}
+    <option value="{{ new_chart_url }}" {% if not chart_id %}selected{% endif %}>+ New chart</option>
+  </select>
+  {% endif %}
+</nav>
+{% include "my_insights/partials/chart_view.html" %}
+{% elif table %}
 <section class="card card-border bg-base-100">
   <div class="card-body gap-3 p-4">
     <div class="flex flex-wrap items-center justify-between gap-2">

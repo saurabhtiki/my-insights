@@ -1,7 +1,8 @@
 {% extends base_template %}
-{% block title %}{% if saved %}{{ saved.name }}{% else %}New query{% endif %}{% endblock %}
+{% block title %}{% if chart_saved %}{{ chart_saved.name }}{% elif saved %}{{ saved.name }}{% elif tab == "chart" %}New chart{% else %}New query{% endif %}{% endblock %}
 {% block extra_head %}
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.6.0/dist/echarts.min.js"></script>
 <script>
   // The builder width the user dragged to last time (before the page draws, so no jump).
   try {
@@ -17,11 +18,13 @@
     <ul>
       <li><a href="{% url 'my_insights:home' %}" title="Back to all your uploaded data">Your data</a></li>
       <li><a href="{% url 'my_insights:dataset' dataset.dataset_id %}" title="This dataset's columns and rows">{{ dataset.name }}</a></li>
-      <li>{% if saved %}{{ saved.name }}{% else %}New query{% endif %}</li>
+      {% if saved %}<li>{% if chart_saved %}<a href="{% url 'my_insights:query' %}?open={{ saved.query_id }}" title="Open the query this chart follows">{{ saved.name }}</a>{% else %}{{ saved.name }}{% endif %}</li>{% endif %}
+      {% if chart_saved %}<li>📊 {{ chart_saved.name }}</li>{% elif not saved %}<li>{% if tab == "chart" %}New chart{% else %}New query{% endif %}</li>{% endif %}
     </ul>
   </div>
 
-  {% with heading="Build a query" subheading="Drag fields into the boxes on the left, or use + Add. The answer updates as you go." %}
+  {% if tab == "chart" %}{% firstof "Build a chart" as heading %}{% else %}{% firstof "Build a query" as heading %}{% endif %}
+  {% with heading=heading subheading="Drag fields into the boxes on the left, or use + Add. The answer updates as you go." %}
     {% include "my_insights/partials/top_bar.html" %}
   {% endwith %}
 
@@ -76,6 +79,11 @@
         handle.addEventListener("pointermove", move);
         handle.addEventListener("pointerup", stop);
         handle.addEventListener("pointercancel", stop);
+      },
+      showTab(tab) {
+        const form = document.getElementById("query-form");
+        form.querySelector("[name=tab]").value = tab;
+        htmx.trigger(form, "submit");
       },
       init() { if (formulaOpen) this.$nextTick(() => this.$refs.dialog.showModal()); },
       newFormula() { this.openFormula("", "", "", hasGroups); },
@@ -136,6 +144,100 @@
           parts.push(formulaLiteral(row.match), formulaLiteral(row.result)));
         if (this.otherwise.trim() !== "") parts.push(formulaLiteral(this.otherwise));
         return "SWITCH(" + parts.join(", ") + ")";
+      },
+    };
+  }
+
+  // ---- charts: numbers in Indian style (12,34,567 · ₹ 1.2 Cr), like the result table ----
+  function indianNumber(value, decimals) {
+    const text = Math.abs(value).toFixed(decimals);
+    let [whole, fraction] = text.split(".");
+    if (whole.length > 3) {
+      whole = whole.slice(0, -3).replace(/\B(?=(\d{2})+(?!\d))/g, ",") + "," + whole.slice(-3);
+    }
+    const sign = value < 0 && Number(text) !== 0 ? "-" : "";
+    return sign + whole + (fraction ? "." + fraction : "");
+  }
+  function shortNumber(value) {
+    const size = Math.abs(value);
+    const steps = [[1e7, " Cr"], [1e5, " L"], [1e3, " K"]];
+    for (const [step, word] of steps) {
+      if (size >= step) return indianNumber(value / step, 1).replace(/\.0$/, "") + word;
+    }
+    return indianNumber(value, Number.isInteger(value) ? 0 : 1);
+  }
+  // hint: "0" / "2" decimals, "r0" / "r2" with ₹, "pct", "short", "rshort"
+  function chartNumber(value, hint) {
+    if (value === null || value === undefined || value === "" || Number.isNaN(Number(value))) return "";
+    const number = Number(value);
+    if (hint === "pct") return indianNumber(number, 1) + "%";
+    if (hint === "short") return shortNumber(number);
+    if (hint === "rshort") return "₹ " + shortNumber(number);
+    const rupee = !!hint && hint[0] === "r";
+    const decimals = hint ? Number(hint.slice(-1)) || 0 : 2;
+    return (rupee ? "₹ " : "") + indianNumber(number, decimals);
+  }
+  function escapeText(text) {
+    return String(text).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+  }
+  // The option from the server holds only data and "_fmt" hints; the label functions are added here.
+  function addChartFormats(option) {
+    [].concat(option.xAxis || [], option.yAxis || []).forEach((axis) => {
+      if (axis._fmt) { const hint = axis._fmt; axis.axisLabel = { ...(axis.axisLabel || {}), formatter: (v) => chartNumber(v, hint) }; }
+    });
+    (option.series || []).forEach((series) => {
+      const hint = series._fmt;
+      if (series.type === "pie") {
+        const withNumber = series.label._pie === "name_pct";
+        series.label.formatter = (p) => withNumber ? p.name + "\n" + chartNumber(p.value, hint) + " (" + p.percent + "%)" : p.name + " (" + p.percent + "%)";
+        series.tooltip = { valueFormatter: (v) => chartNumber(v, hint) };
+      } else if (series.type === "scatter") {
+        series.label.formatter = (p) => p.value[2];
+      } else {
+        series.label.formatter = (p) => chartNumber(p.value, hint);
+        series.tooltip = { valueFormatter: (v) => chartNumber(v, hint) };
+      }
+    });
+    const tip = option.tooltip || {};
+    if (tip._scatter) {
+      const [acrossLabel, upLabel] = tip._scatter;
+      tip.formatter = (p) => "<b>" + escapeText(p.value[2]) + "</b><br>" + escapeText(acrossLabel) + ": "
+        + chartNumber(p.value[0], option.series[p.seriesIndex]._xfmt) + "<br>" + escapeText(upLabel) + ": "
+        + chartNumber(p.value[1], option.series[p.seriesIndex]._fmt);
+    }
+    return option;
+  }
+  function insightChart(optionId, fileName) {
+    let chart = null;
+    let watcher = null;
+    return {
+      init() {
+        if (!window.echarts) { this.$el.textContent = "The chart library did not load. Check the internet connection and reload."; return; }
+        const source = document.getElementById(optionId);
+        if (!source) return;
+        const option = addChartFormats(JSON.parse(source.textContent));
+        const style = getComputedStyle(this.$el);
+        option.backgroundColor = "transparent";
+        option.textStyle = { color: style.color, fontFamily: style.fontFamily };
+        if (option.title) option.title.textStyle = { ...option.title.textStyle, color: style.color };
+        if (option.legend) option.legend.textStyle = { color: style.color };
+        chart = echarts.init(this.$el, null, { renderer: "canvas" });
+        chart.setOption(option);
+        watcher = new ResizeObserver(() => chart && chart.resize());
+        watcher.observe(this.$el);
+      },
+      destroy() {
+        if (watcher) watcher.disconnect();
+        if (chart) chart.dispose();
+        chart = null;
+      },
+      downloadPng() {
+        if (!chart) return;
+        const card = this.$el.closest(".card") || document.body;
+        const link = document.createElement("a");
+        link.href = chart.getDataURL({ type: "png", pixelRatio: 2, backgroundColor: getComputedStyle(card).backgroundColor || "#fff" });
+        link.download = (fileName || "chart").replace(/[\\/:*?"<>|]+/g, "-").slice(0, 80) + ".png";
+        link.click();
       },
     };
   }

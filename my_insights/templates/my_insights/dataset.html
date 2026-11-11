@@ -13,6 +13,8 @@
 
   {% if dataset.link %}
     {% with heading=dataset.name subheading="Built from "|add:dataset.source_file %}{% include "my_insights/partials/top_bar.html" %}{% endwith %}
+  {% elif dataset.query_id %}
+    {% with heading=dataset.name subheading="From query "|add:dataset.source_file %}{% include "my_insights/partials/top_bar.html" %}{% endwith %}
   {% else %}
     {% with heading=dataset.name subheading="From "|add:dataset.source_file %}{% include "my_insights/partials/top_bar.html" %}{% endwith %}
   {% endif %}
@@ -64,6 +66,12 @@
   <div class="flex flex-wrap items-center gap-2 text-sm">
     <span class="text-base-content/60">Saved queries:</span>
     {% for saved in queries %}<a href="{% url 'my_insights:query' %}?open={{ saved.query_id }}" class="badge badge-outline hover:badge-primary" title="Open this saved query">{{ saved.name }}</a>{% endfor %}
+  </div>
+  {% endif %}
+  {% if charts %}
+  <div class="flex flex-wrap items-center gap-2 text-sm">
+    <span class="text-base-content/60">Charts:</span>
+    {% for saved in charts %}<a href="{% url 'my_insights:query' %}?chart={{ saved.chart_id }}" class="badge badge-outline hover:badge-primary" title="Open this chart">📊 {{ saved.name }}</a>{% endfor %}
   </div>
   {% endif %}
 

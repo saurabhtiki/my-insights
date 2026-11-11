@@ -1,0 +1,67 @@
+{% comment %}One filter in the Filters box ("All of these" or "Any one of these"). Needs f, dataset.{% endcomment %}
+{% with key=f.item.key %}
+<li data-item class="flex flex-wrap items-center gap-2 rounded-field bg-base-200 px-2 py-1 text-sm">
+  <input type="hidden" name="filters" value="{{ key }}">
+  <input type="hidden" name="{{ key }}_column" value="{{ f.item.column }}">
+  <input type="hidden" name="{{ key }}_value_key" value="{{ f.item.value_key }}">
+  {% if f.item.any_of %}<input type="hidden" name="{{ key }}_any" value="1">{% endif %}
+  <span data-handle class="cursor-grab select-none text-base-content/50" title="Drag to change the order">⠿</span>
+  <span class="min-w-0 truncate font-medium {% if not f.ops %}text-error{% endif %}"
+        title="{% if f.item.value_key %}A filter on the total of each group{% else %}{{ f.label }}{% endif %}">{% if f.item.value_key %}Total: {% endif %}{{ f.label }}</span>
+  {% if f.ops %}
+  <select name="{{ key }}_op" class="select select-xs w-auto min-w-24 max-w-40 flex-1" title="The kind of test">
+    {% for op, label in f.ops %}<option value="{{ op }}" {% if op == f.item.op %}selected{% endif %}>{{ label }}</option>{% endfor %}
+  </select>
+  {% endif %}
+  {# the buttons stay together (on a narrow screen they move to the next line as one) #}
+  <span class="ml-auto flex items-center">
+    {% if f.picked_count or f.a or f.b %}
+    <button type="submit" name="action" value="clear_filter:{{ key }}" class="btn btn-ghost btn-xs"
+            title="Empty what you picked or typed (untick all), but keep this filter to fill again">Clear</button>
+    {% endif %}
+    <button type="submit" name="action" value="move_filter:{{ key }}" class="btn btn-ghost btn-xs btn-square"
+            title="{% if f.item.any_of %}Move to “All of these”: then this test must always be true{% else %}Move to “Any one of these”: then passing this test OR another one there is enough{% endif %}"
+            aria-label="Move to the other box">⇄</button>
+    <button type="submit" name="action" value="remove:{{ key }}" class="btn btn-ghost btn-xs btn-square" title="Remove this filter" aria-label="Remove">✕</button>
+  </span>
+  {# the values to test, on their own line (hidden when the test needs none, e.g. "is blank") #}
+  <div class="hidden basis-full flex-wrap items-center gap-2 pb-1 has-[*]:flex">
+  {% if not f.ops %}
+  {% elif f.item.op == "in" or f.item.op == "not_in" %}
+  <div class="dropdown w-full" data-hold>
+    <div tabindex="0" role="button" class="btn btn-xs"
+         hx-get="{% url 'my_insights:filter_values' %}?dataset={{ dataset.dataset_id }}&key={{ key }}&column={{ f.item.column|urlencode }}"
+         hx-trigger="focus once" hx-target="#ticks-{{ key }}" hx-swap="innerHTML" hx-include="#ticks-{{ key }}"
+         title="Tick the values to {% if f.item.op == 'in' %}keep{% else %}leave out{% endif %}">
+      {% if f.picked_count %}{{ f.picked_count }} ticked{% else %}Choose values{% endif %} ▾</div>
+    <div tabindex="0" class="dropdown-content z-30 mt-1 w-full space-y-2 rounded-box border border-base-300 bg-base-100 p-3 shadow-lg">
+      <input type="search" name="q" placeholder="Search any value" class="input input-sm w-full" aria-label="Search values"
+             hx-get="{% url 'my_insights:filter_values' %}?dataset={{ dataset.dataset_id }}&key={{ key }}&column={{ f.item.column|urlencode }}"
+             hx-trigger="input changed delay:300ms" hx-target="#ticks-{{ key }}" hx-swap="innerHTML" hx-include="#ticks-{{ key }}" hx-sync="this:replace"
+             @keydown.enter.prevent>
+      <div id="ticks-{{ key }}" class="max-h-60 overflow-y-auto">
+        {% include "my_insights/partials/tick_list.html" with choices=f.choices %}
+      </div>
+      <p class="text-xs text-base-content/60">Shows the 500 most common values; search finds any.</p>
+      <button type="submit" class="btn btn-primary btn-sm w-full" title="Use the ticked values">Apply</button>
+    </div>
+  </div>
+  {% elif f.item.op == "contains" %}
+  <input name="{{ key }}_a" value="{{ f.a }}" placeholder="text" class="input input-xs w-32" aria-label="Text to look for">
+  {% elif f.item.op == "between" and f.kind == "date" %}
+  <input type="date" name="{{ key }}_a" value="{{ f.a }}" class="input input-xs w-36" title="From (leave empty for no start)" aria-label="From">
+  <span class="text-base-content/60">to</span>
+  <input type="date" name="{{ key }}_b" value="{{ f.b }}" class="input input-xs w-36" title="To (leave empty for no end)" aria-label="To">
+  {% elif f.item.op == "between" %}
+  <input name="{{ key }}_a" value="{{ f.a }}" inputmode="decimal" placeholder="from" class="input input-xs w-24" aria-label="From">
+  <span class="text-base-content/60">and</span>
+  <input name="{{ key }}_b" value="{{ f.b }}" inputmode="decimal" placeholder="to" class="input input-xs w-24" aria-label="To">
+  {% elif f.item.op == "last_days" %}
+  <input name="{{ key }}_a" value="{{ f.a }}" inputmode="numeric" placeholder="30" class="input input-xs w-20" aria-label="Number of days">
+  <span class="text-base-content/60">days</span>
+  {% elif f.item.op in "eq ne gt lt" %}
+  <input name="{{ key }}_a" value="{{ f.a }}" inputmode="decimal" placeholder="e.g. 1,00,000" class="input input-xs w-28" aria-label="Number">
+  {% endif %}
+  </div>
+</li>
+{% endwith %}

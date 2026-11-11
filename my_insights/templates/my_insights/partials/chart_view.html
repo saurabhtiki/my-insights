@@ -1,0 +1,33 @@
+{% comment %}
+The drawn chart (Chart tab). The option comes from charting.build_chart as JSON;
+insightChart() in query.html draws it with ECharts and adds Indian number labels.
+{% endcomment %}
+<section class="card card-border bg-base-100">
+  <div class="card-body gap-3 p-4">
+    <div class="flex flex-wrap items-center justify-between gap-2">
+      <h2 class="card-title text-base">{% if chart_saved %}{{ chart_saved.name }}{% else %}Chart{% endif %}</h2>
+      {% if chart_built.option %}
+      <button type="button" class="btn btn-sm" title="Save the chart as a picture (PNG) you can paste into a mail or slide"
+              @click="$dispatch('insights-chart-png')">⤓ Download PNG</button>
+      {% endif %}
+    </div>
+    {% if chart_built.problems %}
+    <div role="alert" class="alert alert-soft alert-warning items-start">
+      <ul class="list-disc space-y-1 pl-4">{% for problem in chart_built.problems %}<li>{{ problem }}</li>{% endfor %}</ul>
+    </div>
+    {% endif %}
+    {% if chart_built.notes %}
+    <div role="status" class="alert alert-soft alert-info items-start text-sm">
+      <ul class="list-disc space-y-1 pl-4">{% for note in chart_built.notes %}<li>{{ note }}</li>{% endfor %}</ul>
+    </div>
+    {% endif %}
+    {% if chart_built.option %}
+    {{ chart_built.option|json_script:"insights-chart-option" }}
+    <div x-data="insightChart('insights-chart-option', '{{ chart_saved.name|default:suggested_chart|escapejs }}')"
+         @insights-chart-png.window="downloadPng()"
+         class="h-[28rem] w-full min-w-0" role="img" aria-label="{% if chart_saved %}{{ chart_saved.name }}{% else %}{{ suggested_chart }}{% endif %}"></div>
+    {% elif not chart_built.problems and not plan.problems %}
+    <p class="text-sm text-base-content/60">Put a field in Group by and one in Values to draw a chart.</p>
+    {% endif %}
+  </div>
+</section>

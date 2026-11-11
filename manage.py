@@ -3,6 +3,10 @@
 
 import os
 import sys
+from pathlib import Path
+
+# Always look in this folder for `demo`, even if PYTHONSAFEPATH is set in the shell.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
 def main():

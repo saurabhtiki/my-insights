@@ -29,12 +29,16 @@
             <h2 class="card-title truncate text-base" title="{{ dataset.name }}">{{ dataset.name }}</h2>
             {% if dataset.link %}
             <p class="truncate text-xs text-base-content/60" title="Built from {{ dataset.source_file }}. Nothing is copied, so it uses almost no memory.">Built from {{ dataset.source_file }}</p>
+            {% elif dataset.query_id %}
+            <p class="truncate text-xs text-base-content/60" title="The answer of the saved query “{{ dataset.source_file }}”. Saving that query updates it.">From query {{ dataset.source_file }}</p>
             {% else %}
             <p class="truncate text-xs text-base-content/60" title="Loaded from {{ dataset.source_file }}">{{ dataset.source_file }}</p>
             {% endif %}
           </div>
           {% if dataset.link %}
           <span class="badge badge-primary badge-soft badge-sm shrink-0" title="A combined dataset: a main dataset with details added from lookup lists">Combined</span>
+          {% elif dataset.query_id %}
+          <span class="badge badge-secondary badge-soft badge-sm shrink-0" title="Made from a saved query's answer, e.g. Top customers. Removing that query removes it too.">Query result</span>
           {% endif %}
           {% if dataset.flagged_count %}
           <span class="tooltip tooltip-left" data-tip="{{ dataset.flagged_count }} column{{ dataset.flagged_count|pluralize }} mostly hold one type (like numbers) but have some odd values, so they were kept as text. Open the profile to see them.">
@@ -46,23 +50,35 @@
           <div><div class="text-lg font-semibold tabular-nums">{{ dataset.row_count|intcomma }}</div><div class="text-base-content/60">rows</div></div>
           <div><div class="text-lg font-semibold tabular-nums">{{ dataset.columns|length }}</div><div class="text-base-content/60">columns</div></div>
         </div>
-        {% if card.queries %}
-        <ul class="space-y-1 border-t border-base-300 pt-2 text-sm" aria-label="Saved queries">
-          {% for saved in card.queries %}
+        {% if card.queries or card.charts %}
+        <ul class="space-y-1 border-t border-base-300 pt-2 text-sm" aria-label="Saved queries and charts">
+          {% for row in card.queries %}{% with saved=row.query %}
           <li class="flex items-center gap-2">
-            <span class="text-base-content/50" aria-hidden="true">▤</span>
+            <span class="text-base-content/50" aria-hidden="true" title="Saved query">▤</span>
             <a href="{% url 'my_insights:query' %}?open={{ saved.query_id }}" class="link link-hover min-w-0 flex-1 truncate" title="Open this saved query">{{ saved.name }}</a>
             <button type="button" class="btn btn-ghost btn-xs btn-square text-error" aria-label="Remove {{ saved.name }}"
                     hx-post="{% url 'my_insights:query_remove' saved.query_id %}" hx-vals='{"from": "home"}' hx-target="#workspace-panel" hx-swap="outerHTML"
-                    hx-confirm="Remove the saved query “{{ saved.name }}”?" title="Remove this saved query">✕</button>
+                    hx-confirm="{{ row.remove_confirm }}" title="Remove this saved query (and its charts)">✕</button>
           </li>
-          {% endfor %}
+          {% endwith %}{% endfor %}
+          {% for row in card.charts %}{% with saved=row.chart %}
+          <li class="flex items-center gap-2">
+            <span aria-hidden="true" title="Chart">📊</span>
+            <a href="{% url 'my_insights:query' %}?chart={{ saved.chart_id }}" class="link link-hover min-w-0 flex-1 truncate"
+               title="Open this chart{% if row.query %} (follows the query “{{ row.query.name }}”){% else %} (keeps its own query){% endif %}">{{ saved.name }}</a>
+            {% if row.problem %}<span class="badge badge-warning badge-soft badge-xs cursor-help" title="{{ row.problem }} Open the chart to fix it.">check</span>{% endif %}
+            <button type="button" class="btn btn-ghost btn-xs btn-square text-error" aria-label="Remove {{ saved.name }}"
+                    hx-post="{% url 'my_insights:chart_remove' saved.chart_id %}" hx-vals='{"from": "home"}' hx-target="#workspace-panel" hx-swap="outerHTML"
+                    hx-confirm="Remove the chart “{{ saved.name }}”?" title="Remove this chart">✕</button>
+          </li>
+          {% endwith %}{% endfor %}
         </ul>
         {% endif %}
         <div class="card-actions items-center justify-between">
           <div class="flex flex-wrap gap-2">
             <a href="{% url 'my_insights:dataset' dataset.dataset_id %}" class="btn btn-sm" title="See each column's type, blanks and examples">Open profile</a>
             <a href="{% url 'my_insights:query' %}?dataset={{ dataset.dataset_id }}" class="btn btn-sm btn-primary btn-soft" title="Ask a question of this data, e.g. Sum of Amount by Month">New query</a>
+            <a href="{% url 'my_insights:query' %}?dataset={{ dataset.dataset_id }}&tab=chart" class="btn btn-sm btn-primary btn-soft" title="Draw a chart of this data, e.g. Sum of Amount by Month as columns">New chart</a>
           </div>
           <button type="button" class="btn btn-sm btn-ghost text-error"
                   hx-post="{% url 'my_insights:dataset_remove' dataset.dataset_id %}" hx-target="#workspace-panel" hx-swap="outerHTML"
