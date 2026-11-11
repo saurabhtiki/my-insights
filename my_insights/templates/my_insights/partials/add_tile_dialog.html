@@ -1,0 +1,67 @@
+{% comment %}Edit mode's "Add tile" box. Needs tile_kinds, charts, queries, kpi_choices, dashboard.{% endcomment %}
+<dialog id="add-tile-dialog" class="modal" aria-labelledby="add-tile-title">
+  <form method="post" action="{% url 'my_insights:tile_add' dashboard.dashboard_id %}" class="modal-box space-y-4"
+        x-data="{ kind: '{% if charts %}chart{% elif queries %}table{% else %}note{% endif %}' }">
+    {% csrf_token %}
+    <h3 id="add-tile-title" class="text-lg font-bold">Add a tile</h3>
+    <div class="grid grid-cols-2 gap-2 sm:grid-cols-4" role="radiogroup" aria-label="Kind of tile">
+      {% for key, icon, label, help in tile_kinds %}
+      <label class="btn btn-sm" :class="kind === '{{ key }}' ? 'btn-primary' : 'btn-ghost border-base-300'" title="{{ help }}">
+        <input type="radio" name="kind" value="{{ key }}" class="hidden" x-model="kind">{{ icon }} {{ label }}
+      </label>
+      {% endfor %}
+    </div>
+
+    <fieldset class="fieldset" x-show="kind === 'chart'">
+      <legend class="fieldset-legend">Saved chart</legend>
+      {% if charts %}
+      <select name="chart_id" class="select w-full" title="The chart to show. Editing the chart later changes this tile too.">
+        {% for chart in charts %}<option value="{{ chart.chart_id }}">{{ chart.name }}</option>{% endfor %}
+      </select>
+      {% else %}
+      <p class="text-sm text-base-content/60">No saved charts yet. Build one from a query's Chart tab and click Save chart.</p>
+      {% endif %}
+    </fieldset>
+
+    <fieldset class="fieldset" x-show="kind === 'table'" x-cloak>
+      <legend class="fieldset-legend">Saved query</legend>
+      {% if queries %}
+      <select name="query_id" class="select w-full" title="The query whose answer the table shows">
+        {% for query in queries %}<option value="{{ query.query_id }}">{{ query.name }}</option>{% endfor %}
+      </select>
+      {% else %}
+      <p class="text-sm text-base-content/60">No saved queries yet. Build a query and click Save query.</p>
+      {% endif %}
+    </fieldset>
+
+    <div class="space-y-2" x-show="kind === 'kpi'" x-cloak>
+      {% if kpi_choices %}
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Number to show</legend>
+        <select name="kpi_value" class="select w-full" title="A value of a saved query. The tile shows its grand total (Group by is ignored).">
+          {% for key, label in kpi_choices %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
+        </select>
+        <p class="label">The grand total, e.g. Sum of Amount over all rows that pass the query's filters.</p>
+      </fieldset>
+      <input name="title" maxlength="100" class="input w-full" placeholder="Title (empty = the value's name)" aria-label="KPI title"
+             title="The words above the number, e.g. Total sales">
+      <input name="subtitle" maxlength="120" class="input w-full" placeholder="Small line under it (optional), e.g. April to date" aria-label="KPI note"
+             title="Optional: a small line under the number">
+      {% else %}
+      <p class="text-sm text-base-content/60">A KPI shows a value of a saved query. Save a query with a value first, e.g. Sum of Amount.</p>
+      {% endif %}
+    </div>
+
+    <fieldset class="fieldset" x-show="kind === 'note'" x-cloak>
+      <legend class="fieldset-legend">Note</legend>
+      <textarea name="text" rows="4" maxlength="2000" class="textarea w-full" placeholder="e.g. Figures are before GST. Details: https://…"
+                aria-label="Note text" title="Plain text. New lines are kept and links (https://…) become clickable."></textarea>
+    </fieldset>
+
+    <div class="modal-action">
+      <button type="button" class="btn btn-ghost" onclick="this.closest('dialog').close()" title="Close without adding">Cancel</button>
+      <button class="btn btn-primary" title="Put this tile at the end of the dashboard">Add tile</button>
+    </div>
+  </form>
+  <form method="dialog" class="modal-backdrop"><button aria-label="Close">close</button></form>
+</dialog>

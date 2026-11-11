@@ -175,6 +175,42 @@ class SavedChart:
 
 
 @dataclass
+class DashboardTile:
+    """One box on a dashboard. Chart / Table / KPI tiles point at a saved chart or query (by
+    id, not a copy), so editing the chart changes the tile. Holds no data."""
+
+    tile_id: int
+    kind: str  # chart | table | kpi | note
+    chart_id: int | None = None
+    query_id: int | None = None  # table and KPI tiles
+    value_key: str = ""  # KPI: which value of the query (ValueItem.key)
+    title: str = ""  # KPI title ("" = the value's name)
+    subtitle: str = ""  # KPI: a small line under the number
+    text: str = ""  # note
+    width: str = "half"  # third | half | two_thirds | full
+    height: str = "short"  # short | tall
+
+
+@dataclass
+class Dashboard:
+    """Tiles in order (the list order is the layout) plus filters for every tile."""
+
+    dashboard_id: int
+    name: str
+    tiles: list[DashboardTile] = field(default_factory=list)
+    filters: list[FilterItem] = field(default_factory=list)
+    next_tile_id: int = 1
+
+    def new_tile_id(self) -> int:
+        tile_id = self.next_tile_id
+        self.next_tile_id += 1
+        return tile_id
+
+    def tile(self, tile_id: int) -> DashboardTile | None:
+        return next((tile for tile in self.tiles if tile.tile_id == tile_id), None)
+
+
+@dataclass
 class Dataset:
     dataset_id: int
     name: str
@@ -219,7 +255,15 @@ class Workspace:
         self.query_result_cache: tuple | None = None  # (dataset ids it was made for, suggestions)
         self.charts: dict[int, SavedChart] = {}
         self._next_chart_id = 1
+        # Ids are never reused, so a tile pointing at a removed chart can't show another one.
+        self.dashboards: dict[int, Dashboard] = {}
+        self._next_dashboard_id = 1
         self.notice = ""  # a problem to show on the next page (after a redirect)
+
+    def new_dashboard_id(self) -> int:
+        dashboard_id = self._next_dashboard_id
+        self._next_dashboard_id += 1
+        return dashboard_id
 
     def new_chart_id(self) -> int:
         chart_id = self._next_chart_id

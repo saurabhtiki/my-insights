@@ -1,0 +1,80 @@
+{% comment %}
+The tile grid: 12 columns on a big screen, 2 on a tablet, every tile full width on a phone.
+Tiles are packed (dashboard.html, packTiles): a short tile can sit under another one next
+to a tall tile, so no space is left empty.
+Each tile box loads its own content (dashboard_tile.html) on load, and again on
+"tile-reload" (a filter on one of its fields changed). In Edit mode the grid is one form:
+any change (drag, size, text) saves and redraws it. Only the size menus save on "change":
+Sortable fires its own "change" event mid-drag, which must not redraw the grid.
+{% endcomment %}
+<{% if edit %}form{% else %}div{% endif %} id="dashboard-grid"
+  {% if edit %}hx-post="{% url 'my_insights:dashboard_layout' dashboard.dashboard_id %}" hx-trigger="change[target.matches('[data-tile-size]')], layout-changed"
+  hx-target="this" hx-swap="outerHTML" hx-indicator="#layout-busy" aria-label="Tiles (Edit mode)"{% endif %}>
+  {% if edit %}{% csrf_token %}{% endif %}
+  {% if tiles %}
+  <div data-tile-grid {% if edit %}data-edit{% endif %} class="grid grid-cols-12 gap-4">
+    {% for t in tiles %}{% with tile=t.tile %}
+    <article data-tile="{{ tile.tile_id }}" data-fields="{{ t.fields }}"
+             {% if edit and tile.kind == "kpi" or edit and tile.kind == "note" %}x-data="tileEditor()"{% endif %}
+             class="card card-border col-span-12 min-w-0 self-start bg-base-100
+                    {% if tile.width == 'third' %}md:col-span-6 lg:col-span-4{% elif tile.width == 'half' %}md:col-span-6{% elif tile.width == 'two_thirds' %}lg:col-span-8{% endif %}
+                    {% if edit %}border-dashed border-primary/40{% endif %}">
+      {% if edit %}
+      <input type="hidden" name="order" value="{{ tile.tile_id }}">
+      <div class="flex flex-wrap items-center gap-2 border-b border-base-300 px-3 py-2">
+        <span data-tile-handle class="cursor-grab select-none text-base-content/50" title="Drag to move this tile">⠿</span>
+        <span class="badge badge-ghost badge-sm" title="{{ t.kind_label }} tile">{{ t.icon }} {{ t.kind_label }}</span>
+        <span class="flex-1"></span>
+        <select data-tile-size name="t{{ tile.tile_id }}_width" class="select select-xs w-28" title="How wide the tile is (on a phone every tile is full width)">
+          {% for key, label in widths %}<option value="{{ key }}" {% if key == tile.width %}selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
+        {% if tile.kind == "chart" or tile.kind == "table" %}
+        <select data-tile-size name="t{{ tile.tile_id }}_height" class="select select-xs w-20" title="Short or tall: a tall chart is bigger, a tall table shows 25 rows a page">
+          {% for key, label in heights %}<option value="{{ key }}" {% if key == tile.height %}selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
+        {% endif %}
+        {% if tile.kind == "kpi" or tile.kind == "note" %}
+        <button type="button" class="btn btn-ghost btn-xs btn-square" x-show="!editing" @click="edit()" aria-label="Edit the text"
+                title="{% if tile.kind == 'note' %}Change the note's text{% else %}Change the KPI's title and small line{% endif %}">✎</button>
+        {% endif %}
+        <button type="button" class="btn btn-ghost btn-xs btn-square text-error" aria-label="Remove this tile"
+                hx-post="{% url 'my_insights:tile_remove' dashboard.dashboard_id tile.tile_id %}" hx-target="#dashboard-grid" hx-swap="outerHTML"
+                hx-confirm="Remove this tile from the dashboard? The chart or query itself is kept." title="Remove this tile (the saved chart or query is kept)">✕</button>
+      </div>
+      {% if tile.kind == "kpi" or tile.kind == "note" %}
+      {# click-to-edit: shown only after ✎; saved with Save, undone with Cancel #}
+      <div data-tile-editor x-show="editing" x-cloak class="space-y-2 px-3 py-3">
+        {% if tile.kind == "kpi" %}
+        <input name="t{{ tile.tile_id }}_title" value="{{ tile.title }}" maxlength="100" class="input input-sm w-full"
+               placeholder="Title (empty = the value's name)" aria-label="KPI title" title="The words above the number. Leave empty to use the value's name">
+        <input name="t{{ tile.tile_id }}_subtitle" value="{{ tile.subtitle }}" maxlength="120" class="input input-sm w-full"
+               placeholder="Small line under it (optional)" aria-label="KPI note" title="Optional: a small line under the number, e.g. April to date">
+        {% else %}
+        <textarea name="t{{ tile.tile_id }}_text" rows="6" maxlength="2000" class="textarea textarea-sm w-full" aria-label="Note text"
+                  title="Plain text. New lines are kept and links (https://…) become clickable.">{{ tile.text }}</textarea>
+        {% endif %}
+        <div class="flex justify-end gap-2">
+          <button type="button" class="btn btn-ghost btn-xs" @click="cancel()" title="Close without saving the changes">Cancel</button>
+          <button type="button" class="btn btn-primary btn-xs" @click="htmx.trigger($el.closest('form'), 'layout-changed')" title="Save the text">Save</button>
+        </div>
+      </div>
+      {% endif %}
+      {% endif %}
+      <div data-tile-body {% if edit and tile.kind == "kpi" or edit and tile.kind == "note" %}x-show="!editing"{% endif %} class="card-body min-w-0 gap-2 p-4"
+           hx-get="{% url 'my_insights:dashboard_tile' dashboard.dashboard_id tile.tile_id %}"
+           hx-trigger="load, tile-reload" hx-vals="js:{clicks: dashboardClicks()}" hx-swap="innerHTML" hx-target="this" hx-sync="this:replace">
+        <div class="skeleton h-5 w-40"></div>
+        <div class="skeleton {% if tile.kind == 'kpi' or tile.kind == 'note' %}h-12{% elif tile.height == 'tall' %}h-[30rem]{% else %}h-64{% endif %} w-full"></div>
+      </div>
+    </article>
+    {% endwith %}{% endfor %}
+  </div>
+  {% if edit %}<span id="layout-busy" class="loading loading-spinner loading-xs htmx-indicator" aria-label="Saving"></span>{% endif %}
+  {% else %}
+  <div class="rounded-box border border-dashed border-base-300 bg-base-100 p-8 text-center text-sm text-base-content/60">
+    No tiles yet.
+    {% if edit %}Click <b>＋ Add tile</b> to put a saved chart, a query's table, a KPI number or a note here.
+    {% else %}<a href="?edit=1" class="link link-primary" title="Add, move, resize or remove tiles">Edit</a> the dashboard to add charts, tables, KPIs and notes.{% endif %}
+  </div>
+  {% endif %}
+</{% if edit %}form{% else %}div{% endif %}>

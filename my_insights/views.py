@@ -111,6 +111,7 @@ def page_context(request, workspace, expired: bool, **extra) -> dict:
         "base_template": conf.get("BASE_TEMPLATE"),
         "datasets": datasets,
         "can_link": len(datasets) >= 2,
+        "dashboards": list(workspace.dashboards.values()) if workspace else [],
         "expired": expired,
         "memory": memory_status(),
         "my_memory_mb": round(used_mb, 1),
@@ -156,7 +157,11 @@ def panel_response(request, workspace, results=(), expired=False):
 def home(request):
     workspace, expired = current_workspace(request)
     expired = expired or request.GET.get("cleared") == "1"  # sent here from a dataset page
-    context = page_context(request, workspace, expired, cards=_cards(workspace))
+    notice = ""
+    if workspace is not None:
+        notice, workspace.notice = workspace.notice, ""
+    results = [{"ok": False, "title": "Not done", "message": notice}] if notice else []
+    context = page_context(request, workspace, expired, cards=_cards(workspace), results=results)
     return render(request, "my_insights/home.html", context)
 
 

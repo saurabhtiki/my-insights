@@ -337,6 +337,9 @@ view) and the result on the right. On a small screen the panel slides in from th
     <div class="flex flex-wrap items-center justify-between gap-2">
       <h2 class="card-title text-base">Result <span class="badge badge-ghost tabular-nums" title="Rows in the answer">{{ row_count|intcomma }} row{{ row_count|pluralize }}</span></h2>
       {% if result.truncated %}<span class="badge badge-warning badge-soft" title="Add filters or fewer Group by fields to see everything">Showing the first {{ row_cap|intcomma }} rows</span>{% endif %}
+      {% if saved and not dirty %}{% include "my_insights/partials/add_to_dashboard.html" with kind="table" item_id=saved.query_id %}
+      {% else %}<span title="{% if saved %}Click “Save changes” first, then add this query's table to a dashboard{% else %}Click “Save query” first, then add its table to a dashboard{% endif %}">
+        <button type="button" class="btn btn-sm" disabled aria-label="Add to dashboard (save the query first)">▦ Add to dashboard ▾</button></span>{% endif %}
     </div>
     {% include "my_insights/partials/query_result.html" %}
     {% if totals %}

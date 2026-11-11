@@ -1,0 +1,141 @@
+{% comment %}
+Draws charts with ECharts (loaded by the page). Used by the query screen and dashboards.
+insightChart(optionId, fileName, clickId, tileId): the option JSON comes from
+charting.build_chart. With clickId (dashboards), a click on a bar / slice / point sets a
+click filter in the "dash" store, which reloads the other tiles.
+{% endcomment %}
+<script>
+  // ---- charts: numbers in Indian style (12,34,567 · ₹ 1.2 Cr), like the result table ----
+  function indianNumber(value, decimals) {
+    const text = Math.abs(value).toFixed(decimals);
+    let [whole, fraction] = text.split(".");
+    if (whole.length > 3) {
+      whole = whole.slice(0, -3).replace(/\B(?=(\d{2})+(?!\d))/g, ",") + "," + whole.slice(-3);
+    }
+    const sign = value < 0 && Number(text) !== 0 ? "-" : "";
+    return sign + whole + (fraction ? "." + fraction : "");
+  }
+  function shortNumber(value) {
+    const size = Math.abs(value);
+    const steps = [[1e7, " Cr"], [1e5, " L"], [1e3, " K"]];
+    for (const [step, word] of steps) {
+      if (size >= step) return indianNumber(value / step, 1).replace(/\.0$/, "") + word;
+    }
+    return indianNumber(value, Number.isInteger(value) ? 0 : 1);
+  }
+  // hint: "0" / "2" decimals, "r0" / "r2" with ₹, "pct", "short", "rshort"
+  function chartNumber(value, hint) {
+    if (value === null || value === undefined || value === "" || Number.isNaN(Number(value))) return "";
+    const number = Number(value);
+    if (hint === "pct") return indianNumber(number, 1) + "%";
+    if (hint === "short") return shortNumber(number);
+    if (hint === "rshort") return "₹ " + shortNumber(number);
+    const rupee = !!hint && hint[0] === "r";
+    const decimals = hint ? Number(hint.slice(-1)) || 0 : 2;
+    return (rupee ? "₹ " : "") + indianNumber(number, decimals);
+  }
+  function escapeText(text) {
+    return String(text).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+  }
+  // The option from the server holds only data and "_fmt" hints; the label functions are added here.
+  function addChartFormats(option) {
+    [].concat(option.xAxis || [], option.yAxis || []).forEach((axis) => {
+      if (axis._fmt) { const hint = axis._fmt; axis.axisLabel = { ...(axis.axisLabel || {}), formatter: (v) => chartNumber(v, hint) }; }
+    });
+    (option.series || []).forEach((series) => {
+      const hint = series._fmt;
+      if (series.type === "pie") {
+        const withNumber = series.label._pie === "name_pct";
+        series.label.formatter = (p) => withNumber ? p.name + "\n" + chartNumber(p.value, hint) + " (" + p.percent + "%)" : p.name + " (" + p.percent + "%)";
+        series.tooltip = { valueFormatter: (v) => chartNumber(v, hint) };
+      } else if (series.type === "scatter") {
+        series.label.formatter = (p) => p.value[2];
+      } else {
+        series.label.formatter = (p) => chartNumber(p.value, hint);
+        series.tooltip = { valueFormatter: (v) => chartNumber(v, hint) };
+      }
+    });
+    const tip = option.tooltip || {};
+    if (tip._scatter) {
+      const [acrossLabel, upLabel] = tip._scatter;
+      tip.formatter = (p) => "<b>" + escapeText(p.value[2]) + "</b><br>" + escapeText(acrossLabel) + ": "
+        + chartNumber(p.value[0], option.series[p.seriesIndex]._xfmt) + "<br>" + escapeText(upLabel) + ": "
+        + chartNumber(p.value[1], option.series[p.seriesIndex]._fmt);
+    }
+    return option;
+  }
+  // A click → the filters it puts on the other tiles, e.g. [{column: "Branch", value: "Delhi"}].
+  // [] when the clicked item stands for many values (e.g. "Others").
+  function chartClickItems(meta, option, p) {
+    const items = [];
+    const add = (side, label) => {
+      if (!side || label === undefined || !Object.prototype.hasOwnProperty.call(side.values, label)) return false;
+      items.push({ column: side.column, part: side.part, kind: side.kind, value: side.values[label], label: side.title + " = " + label });
+      return true;
+    };
+    const series = (option.series || [])[p.seriesIndex] || {};
+    if (!add(meta.x, meta.scatter ? (p.value || [])[2] : p.name)) return [];
+    if (meta.series) add(meta.series, meta.scatter ? p.seriesName : series._series);
+    return items;
+  }
+  function insightChart(optionId, fileName, clickId, tileId) {
+    let chart = null;
+    let watcher = null;
+    let picked = null;  // {seriesIndex, dataIndex} highlighted by this chart's click filter
+    return {
+      init() {
+        if (!window.echarts) { this.$el.textContent = "The chart library did not load. Check the internet connection and reload."; return; }
+        const source = document.getElementById(optionId);
+        if (!source) return;
+        const option = addChartFormats(JSON.parse(source.textContent));
+        const style = getComputedStyle(this.$el);
+        option.backgroundColor = "transparent";
+        option.textStyle = { color: style.color, fontFamily: style.fontFamily };
+        if (option.title) option.title.textStyle = { ...option.title.textStyle, color: style.color };
+        if (option.legend) option.legend.textStyle = { color: style.color };
+        const clickSource = clickId && document.getElementById(clickId);
+        const meta = clickSource ? JSON.parse(clickSource.textContent) : null;
+        if (meta && meta.x) (option.series || []).forEach((series) => { series.selectedMode = "single"; });
+        chart = echarts.init(this.$el, null, { renderer: "canvas" });
+        chart.setOption(option);
+        if (meta && meta.x && window.Alpine) {
+          this.$el.style.cursor = "pointer";
+          chart.on("click", (p) => {
+            if (p.componentType !== "series") return;
+            const items = chartClickItems(meta, option, p);
+            if (!items.length) return;
+            const store = Alpine.store("dash");
+            // Compared by what was clicked (not by position): after this chart is redrawn by a
+            // filter change, clicking the same bar still clears its filter.
+            const labels = (list) => (list || []).map((item) => item.label).join("|");
+            const same = labels(store.clicks[tileId]) === labels(items);
+            // ECharts keeps one picked item per series itself; another series' pick is undone here.
+            if (picked && picked.seriesIndex !== p.seriesIndex) chart.dispatchAction({ type: "unselect", ...picked });
+            picked = same ? null : { seriesIndex: p.seriesIndex, dataIndex: p.dataIndex };
+            store.set(tileId, same ? null : items);
+          });
+        }
+        watcher = new ResizeObserver(() => chart && chart.resize());
+        watcher.observe(this.$el);
+      },
+      unpick(event) {
+        if (!chart || !picked || event.detail.tile !== tileId) return;
+        chart.dispatchAction({ type: "unselect", ...picked });
+        picked = null;
+      },
+      destroy() {
+        if (watcher) watcher.disconnect();
+        if (chart) chart.dispose();
+        chart = null;
+      },
+      downloadPng() {
+        if (!chart) return;
+        const card = this.$el.closest(".card") || document.body;
+        const link = document.createElement("a");
+        link.href = chart.getDataURL({ type: "png", pixelRatio: 2, backgroundColor: getComputedStyle(card).backgroundColor || "#fff" });
+        link.download = (fileName || "chart").replace(/[\\/:*?"<>|]+/g, "-").slice(0, 80) + ".png";
+        link.click();
+      },
+    };
+  }
+</script>

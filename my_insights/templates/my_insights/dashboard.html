@@ -1,0 +1,192 @@
+{% extends base_template %}
+{% block title %}{{ dashboard.name }}{% endblock %}
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.6.0/dist/echarts.min.js"></script>
+{% endblock %}
+{% block content %}
+{% include "my_insights/partials/idle_script.html" %}
+<div class="space-y-5" hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
+  <div class="breadcrumbs text-sm">
+    <ul>
+      <li><a href="{% url 'my_insights:home' %}" title="Back to all your uploaded data and dashboards">Your data</a></li>
+      <li>▦ {{ dashboard.name }}</li>
+    </ul>
+  </div>
+
+  <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+    <div class="min-w-0">
+      <p class="text-xs font-semibold uppercase tracking-widest text-primary">Dashboard</p>
+      {% if edit %}
+      <form method="post" action="{% url 'my_insights:dashboard_rename' dashboard.dashboard_id %}" class="flex flex-wrap items-center gap-2">
+        {% csrf_token %}
+        <input name="name" value="{{ dashboard.name }}" maxlength="100" aria-label="Dashboard name" required
+               class="input input-sm w-72 max-w-full text-base font-semibold {% if rename_problem %}input-error{% endif %}" title="The dashboard's name. Press Enter to save it.">
+        <button class="btn btn-ghost btn-sm" title="Save the new name">Rename</button>
+      </form>
+      {% if rename_problem %}<p class="mt-1 text-xs text-error">{{ rename_problem }}</p>{% endif %}
+      {% else %}
+      <h1 class="truncate text-2xl font-bold tracking-tight">{{ dashboard.name }}</h1>
+      {% endif %}
+      <p class="text-sm text-base-content/60">{% if edit %}Drag tiles by ⠿ to move them. Pick each tile's width and height. Changes are kept as you go.{% else %}Click a bar or slice to filter the other tiles. Filters above apply to every tile.{% endif %}</p>
+    </div>
+    <div class="flex shrink-0 flex-wrap items-center gap-2">
+      {% if edit %}
+      <button type="button" class="btn btn-sm" onclick="document.getElementById('add-tile-dialog').showModal()"
+              title="Add a chart, table, KPI number or note">＋ Add tile</button>
+      <a href="{% url 'my_insights:dashboard' dashboard.dashboard_id %}" class="btn btn-primary btn-sm" title="Leave Edit mode and see the dashboard">Done</a>
+      {% else %}
+      <a href="?edit=1" class="btn btn-sm" title="Add, move, resize or remove tiles">✎ Edit</a>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if problem_notice %}
+  <div role="alert" class="alert alert-soft alert-warning"><span>{{ problem_notice }}</span></div>
+  {% endif %}
+
+  {% include "my_insights/partials/dashboard_filters.html" %}
+
+  {# filters made by clicking a chart: kept in the page only, never saved #}
+  <div x-data x-show="$store.dash.chips().length" x-cloak class="flex flex-wrap items-center gap-2" aria-label="Click filters">
+    <span class="text-sm text-base-content/60" title="Made by clicking a chart. They are not saved with the dashboard.">Clicked:</span>
+    <template x-for="chip in $store.dash.chips()" :key="chip.tile">
+      <span class="badge badge-primary badge-soft gap-1">
+        <span x-text="chip.text"></span>
+        <button type="button" class="cursor-pointer opacity-70 hover:opacity-100" @click="$store.dash.clear(chip.tile)"
+                :aria-label="'Clear ' + chip.text" title="Clear this click filter">✕</button>
+      </span>
+    </template>
+    <button type="button" class="btn btn-ghost btn-xs" @click="$store.dash.clearAll()" title="Clear every click filter">Clear all</button>
+  </div>
+
+  {% include "my_insights/partials/dashboard_grid.html" %}
+
+  {% if edit %}{% include "my_insights/partials/add_tile_dialog.html" %}{% endif %}
+  {% include "my_insights/partials/idle_watch.html" %}
+</div>
+
+{% include "my_insights/partials/chart_script.html" %}
+<script>
+  // Click filters: {tile id: [{column, part, kind, value, label}]}. Kept in the page only.
+  document.addEventListener("alpine:init", () => {
+    Alpine.store("dash", {
+      clicks: {},
+      json() {
+        return JSON.stringify(Object.entries(this.clicks).flatMap(([tile, items]) =>
+          items.map((item) => ({ ...item, tile: Number(tile) }))));
+      },
+      chips() {
+        return Object.entries(this.clicks).map(([tile, items]) =>
+          ({ tile: Number(tile), text: items.map((item) => item.label).join(" and ") }));
+      },
+      set(tile, items) {
+        const columns = (this.clicks[tile] || []).concat(items || []).map((item) => item.column);
+        if (items && items.length) this.clicks[tile] = items; else delete this.clicks[tile];
+        reloadTiles(columns, tile);
+      },
+      clear(tile) {
+        window.dispatchEvent(new CustomEvent("insights-click-cleared", { detail: { tile } }));
+        this.set(tile, null);
+      },
+      clearAll() { Object.keys(this.clicks).forEach((tile) => this.clear(Number(tile))); },
+      // Edit mode: a removed chart tile's click filter goes with it.
+      forgetRemoved() {
+        Object.keys(this.clicks).forEach((tile) => {
+          if (!document.querySelector('[data-tile="' + tile + '"]')) this.set(Number(tile), null);
+        });
+      },
+    });
+  });
+  document.body.addEventListener("htmx:afterSwap", (event) => {
+    if (event.detail.target.id === "dashboard-grid" && window.Alpine) Alpine.store("dash").forgetRemoved();
+  });
+  function dashboardClicks() { return window.Alpine ? Alpine.store("dash").json() : "[]"; }
+  // Reload the tiles whose data has one of these fields (not the one clicked).
+  function reloadTiles(columns, except) {
+    if (!columns.length) return;
+    document.querySelectorAll("[data-tile]").forEach((tile) => {
+      if (Number(tile.dataset.tile) === except) return;
+      const fields = JSON.parse(tile.dataset.fields || "[]");
+      if (fields.some((name) => columns.includes(name))) htmx.trigger(tile.querySelector("[data-tile-body]"), "tile-reload");
+    });
+  }
+  document.body.addEventListener("insights-filters-changed", (event) => reloadTiles(event.detail.columns || [], null));
+
+  // Packing: the grid has tiny 4px rows. Tiles are placed one by one, in their order:
+  // each goes to the highest free spot that is not above the tile before it, so moving a
+  // tile after another really puts it there. Starts snap to the width (a ⅓ tile starts at
+  // the left, the middle or the right third) so tiles line up. A short ⅓ tile still fills
+  // the space under another short one next to a tall tile.
+  const PACK_ROW = 4, PACK_GAP = 16, PACK_COLS = 12;
+  // re-placed on the next frame, once per grid (placing changes the grid's own height)
+  const packWaiting = new Set();
+  const packWatcher = new ResizeObserver((entries) => entries.forEach((entry) => {
+    const grid = entry.target.closest("[data-tile-grid]");
+    if (!grid || packWaiting.has(grid)) return;
+    packWaiting.add(grid);
+    requestAnimationFrame(() => { packWaiting.delete(grid); if (grid.isConnected) layoutTiles(grid); });
+  }));
+  function layoutTiles(grid) {
+    const tiles = [...grid.children].filter((tile) => tile.matches("[data-tile]"));
+    tiles.forEach((tile) => { tile.style.gridColumn = ""; tile.style.gridRow = ""; });
+    const spans = tiles.map((tile) => Math.min(PACK_COLS, parseInt(getComputedStyle(tile).gridColumnEnd.replace("span", "")) || PACK_COLS));
+    const skyline = new Array(PACK_COLS).fill(0);  // first free row in each column
+    let floor = 0;  // a tile never goes above the one before it
+    tiles.forEach((tile, index) => {
+      const span = spans[index], step = span % 4 === 0 ? 4 : span;
+      let best = null;
+      for (let start = 0; start + span <= PACK_COLS; start += step) {
+        const row = Math.max(floor, ...skyline.slice(start, start + span));
+        if (!best || row < best.row) best = { start, row };
+      }
+      const rows = Math.ceil((tile.getBoundingClientRect().height + PACK_GAP) / PACK_ROW);
+      tile.style.gridColumn = best.start + 1 + " / span " + span;
+      tile.style.gridRow = best.row + 1 + " / span " + rows;
+      skyline.fill(best.row + rows, best.start, best.start + span);
+      floor = best.row;
+    });
+  }
+  function packTiles(grid) {
+    Object.assign(grid.style, { gridAutoRows: PACK_ROW + "px", rowGap: "0" });
+    layoutTiles(grid);
+    grid.querySelectorAll("[data-tile]").forEach((tile) => packWatcher.observe(tile));
+    packWatcher.observe(grid);  // a wider or narrower screen changes the widths
+  }
+  document.body.addEventListener("htmx:beforeSwap", (event) => {
+    if (event.detail.target.id === "dashboard-grid") packWatcher.disconnect();
+  });
+
+  // Edit mode: the ✎ editor of a KPI / note tile. Cancel puts the old text back.
+  function tileEditor() {
+    let before = [];
+    const fields = (root) => [...root.querySelectorAll("[data-tile-editor] input, [data-tile-editor] textarea")];
+    return {
+      editing: false,
+      edit() {
+        before = fields(this.$root).map((field) => field.value);
+        this.editing = true;
+        this.$nextTick(() => { const first = fields(this.$root)[0]; if (first) first.focus(); });
+      },
+      cancel() {
+        fields(this.$root).forEach((field, index) => { field.value = before[index]; });
+        this.editing = false;
+      },
+    };
+  }
+
+  htmx.onLoad(function (root) {
+    root.querySelectorAll("[data-tile-grid]").forEach(packTiles);
+    // Edit mode: drag tiles by their handle; the new order is saved at once.
+    if (!window.Sortable) return;
+    root.querySelectorAll("[data-tile-grid][data-edit]").forEach((grid) => Sortable.create(grid, {
+      draggable: "[data-tile]", handle: "[data-tile-handle]", animation: 150,
+      // Sortable's own drag (not the browser's) so the page scrolls near the top / bottom edge
+      forceFallback: true, fallbackOnBody: true, scroll: true, bubbleScroll: true, scrollSensitivity: 120, scrollSpeed: 18,
+      ghostClass: "opacity-40",
+      onChange: () => layoutTiles(grid),  // show where the tile will land while dragging
+      onEnd: (event) => { if (event.oldIndex !== event.newIndex) htmx.trigger(grid.closest("form"), "layout-changed"); },
+    }));
+  });
+</script>
+{% endblock %}

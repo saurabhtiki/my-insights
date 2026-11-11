@@ -6,10 +6,13 @@ insightChart() in query.html draws it with ECharts and adds Indian number labels
   <div class="card-body gap-3 p-4">
     <div class="flex flex-wrap items-center justify-between gap-2">
       <h2 class="card-title text-base">{% if chart_saved %}{{ chart_saved.name }}{% else %}Chart{% endif %}</h2>
-      {% if chart_built.option %}
-      <button type="button" class="btn btn-sm" title="Save the chart as a picture (PNG) you can paste into a mail or slide"
-              @click="$dispatch('insights-chart-png')">⤓ Download PNG</button>
-      {% endif %}
+      <div class="flex flex-wrap items-center gap-2">
+        {% if chart_saved %}{% include "my_insights/partials/add_to_dashboard.html" with kind="chart" item_id=chart_saved.chart_id %}{% endif %}
+        {% if chart_built.option %}
+        <button type="button" class="btn btn-sm" title="Save the chart as a picture (PNG) you can paste into a mail or slide"
+                @click="$dispatch('insights-chart-png')">⤓ Download PNG</button>
+        {% endif %}
+      </div>
     </div>
     {% if chart_built.problems %}
     <div role="alert" class="alert alert-soft alert-warning items-start">

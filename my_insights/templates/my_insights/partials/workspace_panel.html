@@ -12,6 +12,35 @@
   {% endif %}
 
   {% if datasets %}
+  <section class="card card-border bg-base-100" aria-labelledby="dashboards-heading">
+    <div class="card-body gap-3 p-4">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <h2 id="dashboards-heading" class="card-title text-base" title="Pages that put your saved charts, tables, KPI numbers and notes side by side">▦ Dashboards</h2>
+        <form method="post" action="{% url 'my_insights:dashboard_create' %}" class="join">
+          {% csrf_token %}
+          <input name="name" maxlength="100" placeholder="New dashboard name" aria-label="New dashboard name" class="input input-sm join-item w-48"
+                 title="e.g. Monthly review. Leave empty for “Dashboard 1”">
+          <button class="btn btn-sm btn-primary btn-soft join-item" title="Make a new, empty dashboard and add tiles to it">＋ New dashboard</button>
+        </form>
+      </div>
+      {% if dashboards %}
+      <ul class="flex flex-wrap gap-2" aria-label="Your dashboards">
+        {% for item in dashboards %}
+        <li class="flex items-center gap-1 rounded-field border border-base-300 bg-base-100 py-1 pl-3 pr-1 text-sm">
+          <a href="{% url 'my_insights:dashboard' item.dashboard_id %}" class="link link-hover max-w-56 truncate font-medium" title="Open this dashboard">{{ item.name }}</a>
+          <span class="badge badge-ghost badge-xs" title="Tiles on this dashboard">{{ item.tiles|length }}</span>
+          <button type="button" class="btn btn-ghost btn-xs btn-square text-error" aria-label="Remove {{ item.name }}"
+                  hx-post="{% url 'my_insights:dashboard_remove' item.dashboard_id %}" hx-vals='{"from": "home"}' hx-target="#workspace-panel" hx-swap="outerHTML"
+                  hx-confirm="Remove the dashboard “{{ item.name }}”? Its charts and queries are kept." title="Remove this dashboard (its charts and queries are kept)">✕</button>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="text-sm text-base-content/60">No dashboards yet. Save a few charts or queries, then make a dashboard to see them together.</p>
+      {% endif %}
+    </div>
+  </section>
+
   {% if can_link %}
   <div class="flex flex-wrap items-center justify-between gap-2">
     <h2 class="text-lg font-semibold">Your datasets</h2>

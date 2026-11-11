@@ -1,0 +1,87 @@
+{% comment %}
+The dashboard's filter bar: filters for every tile, saved with the dashboard. A tile whose data
+has no field of that name is not filtered by it (it shows a badge). Every change posts the
+form; the answer names the fields that changed, so only their tiles reload.
+{% endcomment %}
+<form id="dashboard-filters" method="post" action="{% url 'my_insights:dashboard_filters' dashboard.dashboard_id %}"
+      hx-post="{% url 'my_insights:dashboard_filters' dashboard.dashboard_id %}"
+      hx-trigger="change[!target.closest('[data-hold]')], submit" hx-target="this" hx-swap="outerHTML" hx-sync="this:replace"
+      class="card card-border bg-base-100" aria-label="Dashboard filters">
+  {% csrf_token %}
+  <div class="card-body gap-3 p-3">
+    <div class="flex flex-wrap items-center gap-2">
+      <h2 class="card-title text-sm" title="Filters for every tile, e.g. Date this FY. Matched by field name: a tile without that field is not filtered (it shows a badge). Saved with the dashboard.">Filters</h2>
+      {% if filter_fields %}
+      <div class="dropdown">
+        <div tabindex="0" role="button" class="btn btn-ghost btn-xs" title="Add a filter for every tile that has this field">+ Add filter</div>
+        <ul tabindex="0" class="menu dropdown-content menu-sm z-30 mt-1 max-h-72 w-64 flex-nowrap overflow-y-auto rounded-box border border-base-300 bg-base-100 p-2 shadow-lg">
+          {% for f in filter_fields %}
+          <li><button type="submit" name="action" value="add_filter:{{ f.name }}" title="{{ f.kind_class|capfirst }} field">{{ f.name }}</button></li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+      {% if filter_rows %}
+      <button type="submit" name="action" value="clear_all" class="btn btn-ghost btn-xs ml-auto" title="Remove every filter">Remove all</button>
+      {% endif %}
+    </div>
+    {% if filter_problem %}<p class="text-xs text-error">{{ filter_problem }}</p>{% endif %}
+    {% if filter_rows %}
+    <ul class="flex flex-wrap gap-2">
+      {% for f in filter_rows %}{% with key=f.item.key %}
+      <li class="flex flex-wrap items-center gap-2 rounded-field bg-base-200 px-2 py-1 text-sm">
+        <input type="hidden" name="filters" value="{{ key }}">
+        <input type="hidden" name="{{ key }}_column" value="{{ f.item.column }}">
+        <span class="font-medium {% if not f.ops %}text-error{% endif %}"
+              title="{% if f.ops %}{{ f.item.column }}{% else %}No tile has this field any more{% endif %}">{{ f.item.column }}</span>
+        {% if f.ops %}
+        <select name="{{ key }}_op" class="select select-xs w-auto" title="The kind of test">
+          {% for op, label in f.ops %}<option value="{{ op }}" {% if op == f.item.op %}selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
+        {% if f.item.op == "in" or f.item.op == "not_in" %}
+        <div class="dropdown" data-hold>
+          <div tabindex="0" role="button" class="btn btn-xs"
+               hx-get="{% url 'my_insights:filter_values' %}?dataset={{ f.dataset_id }}&key={{ key }}&column={{ f.item.column|urlencode }}"
+               hx-trigger="focus once" hx-target="#ticks-{{ key }}" hx-swap="innerHTML" hx-include="#ticks-{{ key }}"
+               title="Tick the values to {% if f.item.op == 'in' %}keep{% else %}leave out{% endif %}">
+            {% if f.picked_count %}{{ f.picked_count }} ticked{% else %}Choose values{% endif %} ▾</div>
+          <div tabindex="0" class="dropdown-content z-30 mt-1 w-72 space-y-2 rounded-box border border-base-300 bg-base-100 p-3 shadow-lg">
+            <input type="search" name="q" placeholder="Search any value" class="input input-sm w-full" aria-label="Search values"
+                   hx-get="{% url 'my_insights:filter_values' %}?dataset={{ f.dataset_id }}&key={{ key }}&column={{ f.item.column|urlencode }}"
+                   hx-trigger="input changed delay:300ms" hx-target="#ticks-{{ key }}" hx-swap="innerHTML" hx-include="#ticks-{{ key }}" hx-sync="this:replace"
+                   @keydown.enter.prevent>
+            <div id="ticks-{{ key }}" class="max-h-60 overflow-y-auto">
+              {% include "my_insights/partials/tick_list.html" with choices=f.choices %}
+            </div>
+            <button type="submit" class="btn btn-primary btn-sm w-full" title="Use the ticked values">Apply</button>
+          </div>
+        </div>
+        {% elif f.item.op == "contains" %}
+        <input name="{{ key }}_a" value="{{ f.a }}" placeholder="text" class="input input-xs w-32" aria-label="Text to look for">
+        {% elif f.item.op == "between" and f.kind == "date" %}
+        <input type="date" name="{{ key }}_a" value="{{ f.a }}" class="input input-xs w-36" title="From (leave empty for no start)" aria-label="From">
+        <span class="text-base-content/60">to</span>
+        <input type="date" name="{{ key }}_b" value="{{ f.b }}" class="input input-xs w-36" title="To (leave empty for no end)" aria-label="To">
+        {% elif f.item.op == "between" %}
+        <input name="{{ key }}_a" value="{{ f.a }}" inputmode="decimal" placeholder="from" class="input input-xs w-24" aria-label="From">
+        <span class="text-base-content/60">and</span>
+        <input name="{{ key }}_b" value="{{ f.b }}" inputmode="decimal" placeholder="to" class="input input-xs w-24" aria-label="To">
+        {% elif f.item.op == "last_days" %}
+        <input name="{{ key }}_a" value="{{ f.a }}" inputmode="numeric" placeholder="30" class="input input-xs w-20" aria-label="Number of days">
+        <span class="text-base-content/60">days</span>
+        {% elif f.item.op in "eq ne gt lt" %}
+        <input name="{{ key }}_a" value="{{ f.a }}" inputmode="decimal" placeholder="e.g. 1,00,000" class="input input-xs w-28" aria-label="Number">
+        {% endif %}
+        {% if not f.ready %}<span class="badge badge-ghost badge-sm" title="Pick or type what to test; until then this filter does nothing">waiting</span>{% endif %}
+        {% endif %}
+        <button type="submit" name="action" value="remove:{{ key }}" class="btn btn-ghost btn-xs btn-square" title="Remove this filter" aria-label="Remove the {{ f.item.column }} filter">✕</button>
+      </li>
+      {% endwith %}{% endfor %}
+    </ul>
+    {% elif filter_fields %}
+    <p class="text-xs text-base-content/60">No filters. Example: + Add filter → Date → this financial year, for every tile with a Date field.</p>
+    {% else %}
+    <p class="text-xs text-base-content/60">Add tiles first; then you can filter them all at once.</p>
+    {% endif %}
+  </div>
+</form>

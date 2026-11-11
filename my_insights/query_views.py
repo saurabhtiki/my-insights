@@ -172,7 +172,7 @@ def query(request):
                 plan.problems.append(str(error))
             else:
                 plan.notes += result.notes
-                rows = _table_rows(result)
+                rows = table_rows(result)
                 workspace.query_result_cache = (draft_id, copy.deepcopy(spec), result.columns, rows)
                 table = _result_table(request, result.columns, rows, draft_id)
         suggested_name = querying.default_name(spec, dataset, catalog)
@@ -657,7 +657,7 @@ def _tick_choices(workspace, dataset, column: str, picked: list[str], search: st
     return extra + ordered
 
 
-def _table_rows(result) -> list[dict]:
+def table_rows(result) -> list[dict]:
     """Result rows with each cell's shown text added ("t" + key), formatted once."""
     rows = []
     for record in result.rows:
@@ -669,6 +669,30 @@ def _table_rows(result) -> list[dict]:
 
 
 def _result_table(request, result_columns, rows: list[dict], draft_id: str) -> RowsTable:
+    # The package builds its sort / page links as "?sort=…", so they go to the page's own
+    # address (the query screen). Every link carries the draft, and query() hands those
+    # clicks to query_table(), e.g. /query/?dataset=1 + "?draft=ab12&sort=g0".
+    params = request.GET.copy()
+    params["draft"] = draft_id
+    return RowsTable(
+        params,
+        rows,
+        table_columns(result_columns, rows),
+        table_id=RESULT_TABLE_ID,
+        base_url=reverse("my_insights:query_table", args=[draft_id]),
+        keep=("draft",),
+        push_url=False,
+        search_fields=tuple("t" + column.key for column in result_columns),
+        search_placeholder="Search the result",
+        noun="rows",
+        default_per_page=25,
+        page_sizes=(25, 50, 100, 200),
+        column_toggle=True,
+    )
+
+
+def table_columns(result_columns, rows: list[dict]) -> list[Column]:
+    """The table's columns for a query result: each with the right filter (dates, ticks…)."""
     columns = []
     for column in result_columns:
         if column.is_value:
@@ -690,26 +714,7 @@ def _result_table(request, result_columns, rows: list[dict], draft_id: str) -> R
             columns.append(Column(column.key, column.label, type=CHOICE))
         else:  # many different values: a "contains" box, not a huge tick list
             columns.append(Column(column.key, column.label, type=TEXT))
-    # The package builds its sort / page links as "?sort=…", so they go to the page's own
-    # address (the query screen). Every link carries the draft, and query() hands those
-    # clicks to query_table(), e.g. /query/?dataset=1 + "?draft=ab12&sort=g0".
-    params = request.GET.copy()
-    params["draft"] = draft_id
-    return RowsTable(
-        params,
-        rows,
-        columns,
-        table_id=RESULT_TABLE_ID,
-        base_url=reverse("my_insights:query_table", args=[draft_id]),
-        keep=("draft",),
-        push_url=False,
-        search_fields=tuple("t" + column.key for column in result_columns),
-        search_placeholder="Search the result",
-        noun="rows",
-        default_per_page=25,
-        page_sizes=(25, 50, 100, 200),
-        column_toggle=True,
-    )
+    return columns
 
 
 # ---------- small endpoints ----------
@@ -739,7 +744,7 @@ def query_table(request, draft_id: str):
                 result = querying.run_query(workspace.connection, plan, spec.top_n)
             except QueryFailed as error:
                 return HttpResponse(format_html('<p class="text-sm text-error">{}</p>', error))
-            columns, rows = result.columns, _table_rows(result)
+            columns, rows = result.columns, table_rows(result)
         table = _result_table(request, columns, rows, draft_id)
     return table_response(
         request,

@@ -12,9 +12,11 @@ only (DuckDB) and is never saved to disk or the database.
    ```python
    MY_INSIGHTS = {
        "BASE_TEMPLATE": "base.html",  # needs title / extra_head / content blocks, htmx 2,
-                                      # Alpine 3, DaisyUI 5 and django-datatable's CSS/JS
-       "MAX_FILE_MB": 20, "MAX_ROWS": 500_000,
-       "SESSION_MEMORY_MB": 150, "TOTAL_MEMORY_MB": 350,   # e.g. a 1 GB server
+       # Alpine 3, DaisyUI 5 and django-datatable's CSS/JS
+       "MAX_FILE_MB": 20,
+       "MAX_ROWS": 500_000,
+       "SESSION_MEMORY_MB": 150,
+       "TOTAL_MEMORY_MB": 350,  # e.g. a 1 GB server
    }
    ```
 5. Tailwind: add `@source ".../my_insights/templates";` to the host's Tailwind input file.

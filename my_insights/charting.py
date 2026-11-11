@@ -422,6 +422,8 @@ def _cartesian(chart, values, rows, x_column, series_column, out):
                 "position": "inside" if stacked else ("right" if horizontal else "top"),
             },
         }
+        if series_column:  # the colour's own value, for click-to-filter on a dashboard
+            item["_series"] = series_label
         if stacked:
             item["stack"] = "total"
         if kind == "area":

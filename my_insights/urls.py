@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import chart_views, link_views, query_views, views
+from . import chart_views, dashboard_views, link_views, query_views, views
 
 app_name = "my_insights"
 
@@ -26,4 +26,38 @@ urlpatterns = [
     ),
     path("query/<int:query_id>/remove/", query_views.query_remove, name="query_remove"),
     path("chart/<int:chart_id>/remove/", chart_views.chart_remove, name="chart_remove"),
+    path("dashboard/new/", dashboard_views.dashboard_create, name="dashboard_create"),
+    path("dashboard/add/", dashboard_views.add_to_dashboard, name="add_to_dashboard"),
+    path("dashboard/<int:dashboard_id>/", dashboard_views.dashboard_page, name="dashboard"),
+    path(
+        "dashboard/<int:dashboard_id>/rename/",
+        dashboard_views.dashboard_rename,
+        name="dashboard_rename",
+    ),
+    path(
+        "dashboard/<int:dashboard_id>/remove/",
+        dashboard_views.dashboard_remove,
+        name="dashboard_remove",
+    ),
+    path(
+        "dashboard/<int:dashboard_id>/filters/",
+        dashboard_views.filters_save,
+        name="dashboard_filters",
+    ),
+    path(
+        "dashboard/<int:dashboard_id>/layout/",
+        dashboard_views.layout_save,
+        name="dashboard_layout",
+    ),
+    path("dashboard/<int:dashboard_id>/tiles/add/", dashboard_views.tile_add, name="tile_add"),
+    path(
+        "dashboard/<int:dashboard_id>/tile/<int:tile_id>/",
+        dashboard_views.tile_view,
+        name="dashboard_tile",
+    ),
+    path(
+        "dashboard/<int:dashboard_id>/tile/<int:tile_id>/remove/",
+        dashboard_views.tile_remove,
+        name="tile_remove",
+    ),
 ]
