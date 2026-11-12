@@ -21,7 +21,7 @@ from . import dashboard as dash
 from . import querying
 from .query_views import _number, _take_notice, table_columns, table_rows
 from .views import home_after_expiry, page_context, panel_response
-from .workspace import FilterItem, current_workspace
+from .workspace import FilterItem, NoteValue, current_workspace
 
 logger = logging.getLogger(__name__)
 
@@ -52,35 +52,55 @@ def _dashboard_url(dashboard, edit: bool = False) -> str:
 # ---------- the page ----------
 
 
-def _grid_context(workspace, dashboard, edit: bool) -> dict:
+def _grid_context(workspace, dashboard, edit: bool, choices: list | None = None) -> dict:
+    """choices: dash.kpi_choices, when the caller has them already (worked out here only in
+    Edit mode with a Note tile: notes insert values from it)."""
     tiles = []
-    names_by_dataset: dict[int, str] = {}  # each dataset's field names (JSON), worked out once
+    names_by_dataset: dict[int, list[str]] = {}  # each dataset's field names, worked out once
+    if choices is None:
+        has_note = any(tile.kind == "note" for tile in dashboard.tiles)
+        choices = dash.kpi_choices(workspace) if edit and has_note else []
     for tile in dashboard.tiles:
-        source = dash.tile_source(workspace, tile)
-        fields = "[]"
-        if source.dataset is not None:
-            dataset_id = source.dataset.dataset_id
-            if dataset_id not in names_by_dataset:
-                names = [info.name for info in dash.usable_fields(source.dataset)]
-                names_by_dataset[dataset_id] = json.dumps(names)
-            fields = names_by_dataset[dataset_id]
+        # a filter on any of these fields reloads the tile (a note: its live values' fields)
+        fields: list[str] = []
+        for asked in dash.query_tiles(tile):
+            dataset = dash.tile_source(workspace, asked).dataset
+            if dataset is None:
+                continue
+            if dataset.dataset_id not in names_by_dataset:
+                names = [info.name for info in dash.usable_fields(dataset)]
+                names_by_dataset[dataset.dataset_id] = names
+            fields += [name for name in names_by_dataset[dataset.dataset_id] if name not in fields]
         kind_icon, kind_label, _ = dash.TILE_KINDS[tile.kind]
-        tiles.append(
-            {
-                "tile": tile,
-                "name": source.name,
-                "problem": source.problem,
-                "icon": kind_icon,
-                "kind_label": kind_label,
-                "fields": fields,
-            }
-        )
+        item = {
+            "tile": tile,
+            "icon": kind_icon,
+            "kind_label": kind_label,
+            "fields": json.dumps(fields),
+            "prefix": f"t{tile.tile_id}_",  # its form fields, e.g. t3_color
+        }
+        if edit and tile.kind == "note":
+            item["values_json"] = json.dumps(
+                [
+                    {"ref": f"{value.query_id}:{value.value_key}", "label": value.label}
+                    for value in tile.values
+                ]
+            )
+        tiles.append(item)
     return {
         "dashboard": dashboard,
         "tiles": tiles,
         "edit": edit,
         "widths": list(dash.WIDTHS.items()),
         "heights": list(dash.HEIGHTS.items()),
+        "colors": [  # (key, name, swatch class), e.g. ("green", "Green", "bg-green-600")
+            (key, name, strong.split()[0]) for key, (name, _, strong) in dash.TILE_COLORS.items()
+        ],
+        "tones": list(dash.TONES.items()),
+        "value_choices": [
+            {"ref": ref, "text": text, "label": text.rpartition(" — ")[2]} for ref, text in choices
+        ],
+        "max_note_values": dash.MAX_NOTE_VALUES,
     }
 
 
@@ -115,15 +135,20 @@ def _filter_context(workspace, dashboard, problem: str = "") -> dict:
 
 
 def _page(request, workspace, dashboard, edit: bool, **extra):
+    choices = dash.kpi_choices(workspace) if edit else []
     context = page_context(
         request,
         workspace,
         False,
-        **(_grid_context(workspace, dashboard, edit) | _filter_context(workspace, dashboard)),
+        **(
+            _grid_context(workspace, dashboard, edit, choices)
+            | _filter_context(workspace, dashboard)
+        ),
         tile_kinds=[(key, *values) for key, values in dash.TILE_KINDS.items()],
         charts=sorted(workspace.charts.values(), key=lambda chart: chart.name.casefold()),
         queries=sorted(workspace.queries.values(), key=lambda query: query.name.casefold()),
-        kpi_choices=dash.kpi_choices(workspace),
+        kpi_choices=choices,
+        new_note={"tile_id": 0, "text": "", "values_json": "[]"},  # the Add tile box's editor
         problem_notice=_take_notice(workspace),
         **extra,
     )
@@ -284,6 +309,11 @@ def _add_from_form(workspace, dashboard, data) -> str:
     if len(dashboard.tiles) >= dash.MAX_TILES:
         return f"A dashboard can hold {dash.MAX_TILES} tiles. Remove one first."
     kind = data.get("kind", "")
+    color = data.get("t0_color", "")  # KPI / Note: the card colour picked in the box
+    look = {
+        "color": color if color in dash.TILE_COLORS else "",
+        "tone": data.get("t0_tone") if data.get("t0_tone") in dash.TONES else "soft",
+    }
     if kind == "chart":
         chart_id = _number(data.get("chart_id"))
         if chart_id not in workspace.charts:
@@ -306,12 +336,14 @@ def _add_from_form(workspace, dashboard, data) -> str:
             value_key=value_key,
             title=_clean(data.get("title", ""), querying.MAX_NAME_LENGTH),
             subtitle=_clean(data.get("subtitle", ""), dash.SUBTITLE_LENGTH),
+            **look,
         )
     elif kind == "note":
-        text = (data.get("text") or "").strip()[: dash.NOTE_LENGTH]
+        text = (data.get("t0_text") or data.get("text") or "").strip()[: dash.NOTE_LENGTH]
         if not text:
             return "Type the note's text."
-        dash.add_tile(dashboard, "note", text=text)
+        values = _read_note_values(workspace, data.get("t0_values", ""), 0)
+        dash.add_tile(dashboard, "note", text=text, values=values, **look)
     else:
         return "Pick what kind of tile to add."
     logger.info("Tile (%s) added to dashboard %s", kind, dashboard.dashboard_id)
@@ -341,8 +373,60 @@ def layout_save(request, dashboard_id: int):
                 tile.subtitle = _clean(data.get(prefix + "subtitle", ""), dash.SUBTITLE_LENGTH)
             if tile.kind == "note" and (data.get(prefix + "text") or "").strip():
                 tile.text = data[prefix + "text"].strip()[: dash.NOTE_LENGTH]
+            if tile.kind == "note" and prefix + "values" in data:
+                tile.values = _read_note_values(workspace, data[prefix + "values"], tile.tile_id)
+            if tile.kind in dash.COLORED_KINDS and prefix + "color" in data:
+                color = data[prefix + "color"]
+                tile.color = color if color in dash.TILE_COLORS else ""
+                if data.get(prefix + "tone") in dash.TONES:
+                    tile.tone = data[prefix + "tone"]
         logger.info("Dashboard %s layout saved", dashboard_id)
         return _grid(request, workspace, dashboard)
+
+
+def _read_note_values(workspace, raw: str, tile_id: int) -> list[NoteValue]:
+    """A note's live values from the editor's JSON, e.g. [{"ref": "3:avg", "label": "Avg
+    price"}]. Unknown queries / values, empty or repeated names are dropped; at most
+    MAX_NOTE_VALUES are kept (the editor stops there too)."""
+    try:
+        items = json.loads(raw or "[]")
+    except ValueError:
+        logger.warning("Note %s values were not readable: %r", tile_id, raw[:200])
+        return []
+    values: list[NoteValue] = []
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict):
+            continue
+        query_part, _, value_key = str(item.get("ref", "")).partition(":")
+        query = workspace.queries.get(_number(query_part))
+        label = _clean(str(item.get("label", "")), querying.MAX_NAME_LENGTH).replace("[", "")
+        label = label.replace("]", "").strip()
+        if query is None or not any(value.key == value_key for value in query.spec.values):
+            continue
+        if not label or any(value.label == label for value in values):
+            continue
+        values.append(NoteValue(query.query_id, value_key, label))
+    if len(values) > dash.MAX_NOTE_VALUES:
+        logger.warning("Note %s had %s values; kept %s", tile_id, len(values), dash.MAX_NOTE_VALUES)
+    return values[: dash.MAX_NOTE_VALUES]
+
+
+@require_POST
+def note_preview(request, dashboard_id: int, tile_id: int):
+    """Edit mode: the note being typed, formatted, with its live values as name chips."""
+    _, _, response = _dashboard_or_gone(request, dashboard_id)
+    if response:
+        return response
+    prefix = f"t{tile_id}_"
+    text = (request.POST.get(prefix + "text") or "")[: dash.NOTE_LENGTH]
+    try:
+        items = json.loads(request.POST.get(prefix + "values") or "[]")
+        labels = [str(item.get("label", "")) for item in items if isinstance(item, dict)]
+    except (ValueError, AttributeError, TypeError):
+        logger.info("Note %s/%s preview: values not readable", dashboard_id, tile_id)
+        labels = []
+    html = dash.render_note(text, dict.fromkeys(labels))
+    return HttpResponse(html or '<span class="text-base-content/50">Nothing typed yet.</span>')
 
 
 def _grid(request, workspace, dashboard):

@@ -107,9 +107,30 @@ def test_dates_in_formulas(sales):
     assert values[0] == 202604
 
 
+def test_text_tests_ignore_capitals_and_blanks_are_found(sales):
+    workspace, dataset = sales
+    values, compiled = formula_values(workspace, dataset, 'CONTAINS([Branch], "U")')
+    assert compiled.kind == "yes/no" and values == [True, False, True, False, True]
+    values, _ = formula_values(workspace, dataset, 'STARTS_WITH([Item], "a")')
+    assert values == [True, False, True, False, False]
+    values, _ = formula_values(workspace, dataset, 'ENDS_WITH([Item], "2")')
+    assert values == [False, True, False, True, False]
+    values, _ = formula_values(workspace, dataset, "ISBLANK([Branch])")
+    assert values == [False, False, False, True, False]
+    values, _ = formula_values(workspace, dataset, "NOT ISBLANK([Cost])")
+    assert values == [True] * 5
+    # what the IF builder writes for "Branch does not contain U"
+    values, _ = formula_values(
+        workspace, dataset, 'IF(NOT CONTAINS([Branch], "U"), "Other", "Mumbai")'
+    )
+    assert values == ["Mumbai", "Other", "Mumbai", "Other", "Mumbai"]
+
+
 @pytest.mark.parametrize(
     ("formula", "message"),
     [
+        ('CONTAINS([Amount], "1")', "Expected text as the first part of CONTAINS"),
+        ("STARTS_WITH([Item])", "Wrong number of parts in STARTS_WITH"),
         ("DROP", "Unknown word “DROP”"),
         ("[Cots]", "Did you mean “[Cost]”?"),
         ("[Amount] +", "stops too early"),

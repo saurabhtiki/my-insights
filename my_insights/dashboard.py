@@ -12,12 +12,16 @@ query builder's SQL, totals and number formats are used unchanged.
 import copy
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 
+from django.utils.html import escape, urlize
+from django.utils.safestring import SafeString, mark_safe
+
 from . import charting, querying
 from .querying import DATE_PARTS, QueryFailed
-from .workspace import Dashboard, DashboardTile, FilterItem, QuerySpec
+from .workspace import Dashboard, DashboardTile, FilterItem, NoteValue, QuerySpec
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +29,11 @@ TILE_KINDS = {
     "chart": ("📊", "Chart", "A saved chart. Editing the chart changes the tile too."),
     "table": ("▤", "Table", "A saved query's answer as a table you can sort and page."),
     "kpi": ("#", "KPI", "One big number: a value's grand total, e.g. ₹ 1.2 Cr Total sales."),
-    "note": ("📝", "Note", "Plain text, e.g. what to look at. Links become clickable."),
+    "note": (
+        "📝",
+        "Note",
+        "Text with simple formatting and live values, e.g. Avg price is [[Avg of Price]].",
+    ),
 }
 WIDTHS = {"third": "⅓ width", "half": "½ width", "two_thirds": "⅔ width", "full": "Full width"}
 HEIGHTS = {"short": "Short", "tall": "Tall"}
@@ -36,6 +44,39 @@ MAX_CLICK_VALUES = 5000  # labels a chart sends for click-to-filter
 NOTE_LENGTH = 2000
 SUBTITLE_LENGTH = 120
 NEEDS_TEXT = {"contains", "eq", "ne", "gt", "lt", "last_days"}
+MAX_NOTE_VALUES = 10
+
+# KPI / note colours: key → (name, soft classes, strong classes). Fixed Tailwind colours, not
+# the host's theme colours, so "Purple" is purple in every host. Soft is a see-through tint,
+# so it suits dark mode too. Class names are written out in full: a host's Tailwind build
+# keeps only names it finds in the my_insights folder (README, step 5).
+TILE_COLORS = {
+    "blue": ("Blue", "bg-blue-500/10 border-blue-500/40", "bg-blue-600 text-white border-blue-600"),
+    "purple": (
+        "Purple",
+        "bg-violet-500/10 border-violet-500/40",
+        "bg-violet-600 text-white border-violet-600",
+    ),
+    "teal": ("Teal", "bg-teal-500/10 border-teal-500/40", "bg-teal-600 text-white border-teal-600"),
+    "green": (
+        "Green",
+        "bg-green-500/10 border-green-500/40",
+        "bg-green-600 text-white border-green-600",
+    ),
+    "orange": (
+        "Orange",
+        "bg-orange-500/10 border-orange-500/40",
+        "bg-orange-600 text-white border-orange-600",
+    ),
+    "red": ("Red", "bg-red-500/10 border-red-500/40", "bg-red-600 text-white border-red-600"),
+    "grey": (
+        "Grey",
+        "bg-slate-500/10 border-slate-500/40",
+        "bg-slate-600 text-white border-slate-600",
+    ),
+}
+TONES = {"soft": "Soft", "strong": "Strong"}
+COLORED_KINDS = {"kpi", "note"}
 
 
 # ---------- names ----------
@@ -66,6 +107,21 @@ def create(workspace, name: str) -> Dashboard:
     workspace.dashboards[dashboard.dashboard_id] = dashboard
     logger.info("Dashboard %s created", dashboard.dashboard_id)
     return dashboard
+
+
+def tile_color_class(tile: DashboardTile) -> str:
+    """The card's colour classes: soft = a light tint, strong = full colour with its own
+    readable text colour. Plain (or a chart / table tile) = the normal card."""
+    color = TILE_COLORS.get(tile.color)
+    if color is None or tile.kind not in COLORED_KINDS:
+        return "bg-base-100"
+    _, soft, strong = color
+    return strong if tile.tone == "strong" else soft
+
+
+def is_strong(tile: DashboardTile) -> bool:
+    """A full-colour card: its number and links take the card's text colour."""
+    return tile.kind in COLORED_KINDS and tile.color in TILE_COLORS and tile.tone == "strong"
 
 
 def add_tile(dashboard: Dashboard, kind: str, **settings) -> DashboardTile:
@@ -110,6 +166,19 @@ def tile_source(workspace, tile: DashboardTile) -> TileSource:
     return TileSource(spec, dataset, name)
 
 
+def value_tile(tile: DashboardTile, value: NoteValue) -> DashboardTile:
+    """A note's live value, asked like a KPI tile. It keeps the note's id, so the note is
+    never "its own" clicked chart."""
+    return DashboardTile(tile.tile_id, "kpi", query_id=value.query_id, value_key=value.value_key)
+
+
+def query_tiles(tile: DashboardTile) -> list[DashboardTile]:
+    """The tiles whose questions this tile shows: itself, or a note's live values."""
+    if tile.kind == "note":
+        return [value_tile(tile, value) for value in tile.values]
+    return [tile]
+
+
 @dataclass
 class FieldChoice:
     name: str
@@ -132,8 +201,8 @@ def dashboard_fields(workspace, dashboard: Dashboard) -> dict[str, FieldChoice]:
     field sets its type (a tile where it has another type is not filtered by it)."""
     fields: dict[str, FieldChoice] = {}
     seen = set()
-    for tile in dashboard.tiles:
-        source = tile_source(workspace, tile)
+    for asked in [part for tile in dashboard.tiles for part in query_tiles(tile)]:
+        source = tile_source(workspace, asked)  # a note: each live value's query
         if source.dataset is None or source.dataset.dataset_id in seen:
             continue
         seen.add(source.dataset.dataset_id)
@@ -312,6 +381,7 @@ class TileView:
     result: object = None  # table: a QueryResult
     kpi_label: str = ""
     kpi_value: str = ""
+    note_html: str = ""  # note: the formatted text with its live values
 
 
 def _add_filters(spec, catalog, wanted, view: TileView) -> None:
@@ -363,6 +433,10 @@ def tile_query(workspace, dashboard, tile, fields, clicks, view: TileView):
 def build_tile(workspace, dashboard, tile, fields, clicks, today=None) -> TileView:
     """Everything one tile shows, with the dashboard's filters and the page's clicks."""
     view = TileView(tile)
+    if tile.kind == "note":
+        shown = _note_values(workspace, dashboard, tile, fields, clicks, view, today)
+        view.note_html = render_note(tile.text, shown)
+        return view
     found = tile_query(workspace, dashboard, tile, fields, clicks, view)
     if found is None:
         return view
@@ -434,6 +508,147 @@ def _kpi(workspace, tile, spec, dataset, catalog, view: TileView, today) -> None
     view.kpi_label = tile.title or column.label
     view.kpi_value = querying.format_value(value, column) or "—"
     view.notes = plan.notes
+
+
+# ---------- notes: simple formatting and live values ----------
+
+
+@dataclass
+class ShownValue:
+    text: str = ""  # e.g. ₹ 1,245.50
+    problem: str = ""
+    gone: bool = False  # its query, value or data was removed
+    name: str = ""  # the query's name
+
+
+def _note_values(workspace, dashboard, tile, fields, clicks, view, today) -> dict:
+    """{label: ShownValue} for a note's live values, each worked out like a KPI with the
+    dashboard's filters and the page's clicks. Their badges and notes go on the note."""
+    shown = {}
+    for value in tile.values:
+        part = TileView(value_tile(tile, value))
+        found = tile_query(workspace, dashboard, part.tile, fields, clicks, part)
+        gone = found is None or kpi_spec(found[0], value.value_key) is None
+        if found is not None:
+            _kpi(workspace, part.tile, *found, part, today)
+        shown[value.label] = ShownValue(part.kpi_value, part.problem, gone, part.name)
+        if part.problem:
+            logger.info("Note %s value %r not shown: %s", tile.tile_id, value.label, part.problem)
+        view.filtered_by += [name for name in part.filtered_by if name not in view.filtered_by]
+        view.skipped += [text for text in part.skipped if text not in view.skipped]
+        view.notes += [text for text in part.notes if text not in view.notes]
+    return shown
+
+
+TOKEN = re.compile(r"\[\[([^\[\]\n]{1,100})\]\]")  # [[Avg of Selling price]]
+# a line's size: the mark at its start → (name, classes). Normal has no mark.
+NOTE_SIZES = {
+    "# ": ("Heading", "text-xl font-bold"),
+    "## ": ("Large", "text-base font-semibold"),
+    "-# ": ("Small", "text-xs"),
+}
+_MARKS = [  # on escaped text; bold first, then underline (__) before italic (_)
+    (re.compile(r"\*\*(?=\S)(.+?)(?<=\S)\*\*"), r"<strong>\1</strong>"),
+    (re.compile(r"(?<!\w)__(?=\S)(.+?)(?<=\S)__(?!\w)"), r"<u>\1</u>"),
+    (re.compile(r"(?<!\w)_(?=[^\s_])(.+?)(?<=[^\s_])_(?!\w)"), r"<em>\1</em>"),
+]
+_LINK = re.compile(r"(<a [^>]*>.*?</a>)")
+# a value's place while the line is escaped: private-use characters no one types
+KEPT_OPEN, KEPT_CLOSE = "\ue000", "\ue001"
+_KEPT = re.compile(KEPT_OPEN + r"(\d+)" + KEPT_CLOSE)
+# a value right after a link ("https://x.com[[Total]]") gets a space before it, or urlize
+# would make it part of the address
+_GLUED = re.compile(r"((?:https?://|www\.)[^\s" + KEPT_OPEN + r"]*)(?=" + KEPT_OPEN + ")")
+WARN = "font-semibold underline decoration-dotted"  # readable on any card colour
+_BULLET = re.compile(r"^- (.*)$")
+_NUMBER = re.compile(r"^(?P<number>\d{1,4})\. (.*)$")
+
+
+def _value_html(label: str, shown: dict) -> str:
+    """A [[label]] in the note: its value, a chip (the editor's preview), or why not."""
+    if label not in shown:
+        return (
+            f'<span class="{WARN}" title="No live value has this name: insert it again '
+            f'or fix the name">⚠ unknown value [[{escape(label)}]]</span>'
+        )
+    value = shown[label]
+    if value is None:  # the editor's preview: no numbers worked out
+        return f'<span class="badge badge-sm badge-outline">{escape(label)}</span>'
+    if value.problem:
+        words = "value removed" if value.gone else "no value"
+        return f'<span class="{WARN}" title="{escape(value.problem)}">⚠ {words}</span>'
+    return (
+        f'<span class="font-semibold tabular-nums" title="{escape(label)}, from the query '
+        f'“{escape(value.name)}”">{escape(value.text)}</span>'
+    )
+
+
+def _inline(raw: str, shown: dict) -> str:
+    """One line: escaped, links clickable, **bold** _italic_ __underline__, [[values]]."""
+    kept: list[str] = []
+
+    def keep(match):
+        kept.append(_value_html(match.group(1).strip(), shown))
+        return f"{KEPT_OPEN}{len(kept) - 1}{KEPT_CLOSE}"
+
+    html = urlize(_GLUED.sub(r"\1 ", TOKEN.sub(keep, raw)), nofollow=True, autoescape=True)
+    parts = []
+    for part in _LINK.split(html):  # marks never touch a link (its address may have _)
+        if not part.startswith("<a "):
+            for pattern, tag in _MARKS:
+                part = pattern.sub(tag, part)
+        parts.append(part)
+    return _KEPT.sub(lambda match: kept[int(match.group(1))], "".join(parts))
+
+
+def render_note(text: str, shown: dict) -> SafeString:
+    """A note's text as safe HTML. Everything is escaped first; only these marks become
+    styles, so a pasted <script> stays text:
+
+        # Heading   ## Large   -# Small   - bullet   1. numbered
+        **bold**  _italic_  __underline__  [[Avg of Price]] → ₹ 1,245.50
+
+    A plain old note (no marks) looks as before: lines kept, links clickable.
+    shown: {label: ShownValue}; a None value is the editor's preview (shown as a chip)."""
+    blocks: list[str] = []
+    lines: list[str] = []  # plain lines, joined with <br>
+    items: list[str] = []  # list items
+    list_tag = ""
+    list_start = 1  # a numbered list keeps its first number: 5. 6. stays 5. 6.
+
+    def flush():
+        nonlocal list_tag
+        if lines:
+            blocks.append("<div>" + "<br>".join(lines) + "</div>")
+            lines.clear()
+        if items:
+            classes = "list-disc" if list_tag == "ul" else "list-decimal"
+            start = f' start="{list_start}"' if list_tag == "ol" and list_start != 1 else ""
+            html = "".join(items)
+            blocks.append(f'<{list_tag}{start} class="{classes} pl-5">{html}</{list_tag}>')
+            items.clear()
+        list_tag = ""
+
+    for raw in (text or "").splitlines():
+        size = next((mark for mark in NOTE_SIZES if raw.startswith(mark)), None)
+        item = _BULLET.match(raw) or _NUMBER.match(raw)
+        if size:
+            flush()
+            classes = NOTE_SIZES[size][1]
+            blocks.append(f'<div class="{classes}">{_inline(raw[len(size) :], shown)}</div>')
+        elif item:
+            tag = "ul" if raw.startswith("- ") else "ol"
+            if list_tag != tag:
+                flush()
+                list_tag = tag
+                list_start = int(item.group("number")) if tag == "ol" else 1
+            items.append(f"<li>{_inline(item.groups()[-1], shown)}</li>")
+        else:
+            if items:
+                flush()
+            lines.append(_inline(raw, shown))
+    flush()
+    return mark_safe("".join(blocks))  # every piece is escaped above
 
 
 def kpi_choices(workspace) -> list[tuple[str, str]]:

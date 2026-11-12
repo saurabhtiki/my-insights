@@ -1,0 +1,26 @@
+{% comment %}
+A KPI / Note card's colour: swatches + Soft / Strong. Needs prefix (field names, e.g. "t3_" →
+t3_color, t3_tone), color, tone, colors, tones. save=True: each change saves the layout (on a
+tile); in the Add tile box it is sent with the form. Soft / Strong waits until a colour is picked.
+{% endcomment %}
+<div class="space-y-3" x-data="{ color: '{{ color }}' }">
+  <div class="flex flex-wrap gap-2" role="radiogroup" aria-label="Colour">
+    <label class="cursor-pointer" title="Plain: the normal card">
+      <input type="radio" {% if save %}data-tile-size{% endif %} name="{{ prefix }}color" value="" x-model="color" class="peer sr-only" {% if not color %}checked{% endif %} aria-label="Plain">
+      <span class="block size-7 rounded-full border-2 border-base-300 bg-base-100 peer-checked:ring-2 peer-checked:ring-base-content peer-checked:ring-offset-2 peer-focus-visible:ring-2"></span>
+    </label>
+    {% for key, name, swatch in colors %}
+    <label class="cursor-pointer" title="{{ name }}">
+      <input type="radio" {% if save %}data-tile-size{% endif %} name="{{ prefix }}color" value="{{ key }}" x-model="color" class="peer sr-only" {% if key == color %}checked{% endif %} aria-label="{{ name }}">
+      <span class="block size-7 rounded-full {{ swatch }} peer-checked:ring-2 peer-checked:ring-base-content peer-checked:ring-offset-2 peer-focus-visible:ring-2"></span>
+    </label>
+    {% endfor %}
+  </div>
+  <fieldset class="join w-full" role="radiogroup" aria-label="Style" :disabled="!color"
+            title="Soft: a light tint. Strong: the full colour, with readable text picked for you">
+    {% for key, label in tones %}
+    <input type="radio" {% if save %}data-tile-size{% endif %} name="{{ prefix }}tone" value="{{ key }}" class="join-item btn btn-xs flex-1" aria-label="{{ label }}" {% if key == tone %}checked{% endif %}>
+    {% endfor %}
+  </fieldset>
+  <p class="text-xs text-base-content/60" x-show="!color">Pick a colour first, then Soft or Strong.</p>
+</div>

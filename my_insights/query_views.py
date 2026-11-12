@@ -19,7 +19,7 @@ from django.views.decorators.http import require_GET, require_http_methods, requ
 from django_datatable import CHOICE, DATE, NUMBER, TEXT, YES_NO, Column, RowsTable, table_response
 
 from . import chart_views, charting, query_dataset, querying
-from .formula import AGGREGATES, FUNCTIONS
+from .formula import AGGREGATES, FORMULA_KIND, FUNCTIONS
 from .query_dataset import QueryDatasetFailed
 from .querying import (
     AGGREGATIONS,
@@ -74,7 +74,6 @@ SIGNS = [
     ("OR", "Either can be true"),
     ("NOT", "The opposite"),
 ]
-COMPARE_SIGNS = ["=", "<>", ">", "<", ">=", "<="]
 GROUP_SIGNS = {"+", "-", "*", "/", "(", ")"}  # the only signs shown for "Per group"
 BOTH_FUNCTIONS = {"ROUND", "ABS"}  # shown for "Per row" and "Per group"
 
@@ -607,7 +606,12 @@ def _screen_context(workspace, dataset, spec, catalog, plan, result, table, quer
             (name, help_text, _function_mode(name)) for name, help_text in FUNCTIONS.items()
         ],
         "signs": [(sign, help_text, sign in GROUP_SIGNS) for sign, help_text in SIGNS],
-        "compare_signs": COMPARE_SIGNS,
+        # the IF builder offers tests that suit each field: "contains" for text, "before" for dates…
+        "field_kinds": {
+            f["info"].name: FORMULA_KIND.get(f["info"].kind, "text")
+            for f in fields
+            if not f["info"].error and not f["values_only"]
+        },
         "aggregation_labels": {key: label for key, (label, _, _) in AGGREGATIONS.items()},
         # not the datasets made from this query: it can't ask about its own answer
         "all_datasets": [d for d in workspace.datasets.values() if d.dataset_id not in hidden],

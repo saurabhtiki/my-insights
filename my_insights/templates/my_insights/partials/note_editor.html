@@ -1,0 +1,57 @@
+{% comment %}
+Edit mode: a Note tile's editor (inside dashboard_grid.html's ✎ box). Needs tile, t (its
+values_json), dashboard, value_choices, max_note_values.
+The toolbar only adds simple marks to the text (**bold**, _italic_, __underline__, # sizes,
+- bullets, 1. numbers); the preview under the box shows how the note will look.
+"Insert value" puts [[name]] in the text: on the dashboard it becomes that value's number.
+{% endcomment %}
+<div data-note-editor x-data="noteEditor({{ t.values_json }}, {{ max_note_values }})" @note-reset="reset()" class="space-y-2">
+  <div class="flex flex-wrap items-center gap-1" role="toolbar" aria-label="Formatting">
+    <button type="button" class="btn btn-xs btn-square font-bold" @click="wrap('**')" title="Bold: select words, then click (adds **words**)">B</button>
+    <button type="button" class="btn btn-xs btn-square italic" @click="wrap('_')" title="Italic: select words, then click (adds _words_)">I</button>
+    <button type="button" class="btn btn-xs btn-square underline" @click="wrap('__')" title="Underline: select words, then click (adds __words__)">U</button>
+    <select class="select select-xs w-28" @change="size($event.target.value); $event.target.selectedIndex = 0"
+            aria-label="Text size" title="Size of the lines you are on: Small, Normal, Large or Heading">
+      <option value="">Size…</option>
+      <option value="-# ">Small</option>
+      <option value="normal">Normal</option>
+      <option value="## ">Large</option>
+      <option value="# ">Heading</option>
+    </select>
+    <button type="button" class="btn btn-xs" @click="list('- ')" title="Bullets for the lines you are on (adds - at the start). Click again to remove">• List</button>
+    <button type="button" class="btn btn-xs" @click="list('1. ')" title="Numbers for the lines you are on (adds 1. 2. …). Click again to remove">1. List</button>
+  </div>
+
+  <textarea name="t{{ tile.tile_id }}_text" rows="6" maxlength="2000" class="textarea textarea-sm w-full font-mono" aria-label="Note text" x-ref="text"
+            hx-post="{% url 'my_insights:note_preview' dashboard.dashboard_id tile.tile_id %}" hx-trigger="input changed delay:300ms, note-refresh"
+            hx-target="#note-preview-{{ tile.tile_id }}" hx-swap="innerHTML" hx-sync="this:replace"
+            title="Type the note. New lines are kept and links (https://…) become clickable. Use the buttons above for bold, sizes and lists">{{ tile.text }}</textarea>
+
+  {% if value_choices %}
+  <div class="flex flex-wrap items-center gap-1">
+    <select x-ref="pick" class="select select-xs min-w-0 flex-1" aria-label="Value to insert"
+            title="A saved query's value, worked out like a KPI (its grand total). It follows the dashboard's filters and clicks">
+      {% for choice in value_choices %}<option value="{{ choice.ref }}" data-label="{{ choice.label }}">{{ choice.text }}</option>{% endfor %}
+    </select>
+    <button type="button" class="btn btn-xs" @click="insert()" :disabled="values.length >= max"
+            title="Put this value where the cursor is, e.g. Avg price is [[Avg of Price]] → Avg price is ₹ 1,245.50">＋ Insert value</button>
+  </div>
+  {% else %}
+  <p class="text-xs text-base-content/60">To show live numbers here, save a query with a value first, e.g. Avg of Selling price.</p>
+  {% endif %}
+  <ul class="flex flex-wrap gap-1" x-show="values.length" aria-label="Live values in this note">
+    <template x-for="(value, index) in values" :key="value.label">
+      <li class="badge badge-outline gap-1">
+        <span x-text="value.label"></span>
+        <button type="button" class="cursor-pointer opacity-70 hover:opacity-100" @click="rename(index)" :aria-label="'Rename ' + value.label" title="Rename this value (the text changes too)">✎</button>
+        <button type="button" class="cursor-pointer opacity-70 hover:opacity-100" @click="remove(index)" :aria-label="'Remove ' + value.label" title="Remove this value and its place in the text">✕</button>
+      </li>
+    </template>
+  </ul>
+  <p class="text-xs text-warning" x-show="values.length >= max" x-cloak>A note can hold {{ max_note_values }} live values. Remove one to add another.</p>
+  <input type="hidden" name="t{{ tile.tile_id }}_values" x-ref="values" value="{{ t.values_json }}" :value="JSON.stringify(values)">
+
+  <div class="text-xs text-base-content/60">Preview</div>
+  <div id="note-preview-{{ tile.tile_id }}" aria-live="polite"
+       class="min-w-0 break-words rounded-box border border-dashed border-base-300 bg-base-100 p-2 text-sm leading-relaxed text-base-content [&_a]:text-primary [&_a]:underline"></div>
+</div>

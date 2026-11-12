@@ -1,6 +1,13 @@
-{% comment %}One tile's content (loaded into its box in dashboard_grid.html). Needs view, tile, dashboard.{% endcomment %}
+{% comment %}One tile's content (loaded into its box in dashboard_grid.html). Needs view, tile, dashboard.{% endcomment %}{% load my_insights %}
 {% if tile.kind == "note" %}
-<div class="min-w-0 break-words text-sm leading-relaxed [&_a]:text-primary [&_a]:underline">{{ tile.text|urlize|linebreaksbr }}</div>
+<div class="min-w-0 break-words text-sm leading-relaxed [&_a]:underline {% if tile|tile_strong %}[&_a]:text-inherit{% else %}[&_a]:text-primary{% endif %}">{{ view.note_html }}</div>
+{% if view.skipped %}
+<div class="flex flex-wrap gap-1">
+  {% for text in view.skipped %}
+  <span class="badge {% if tile|tile_strong %}badge-neutral{% else %}badge-warning badge-soft{% endif %} badge-sm cursor-help" title="A live value's data can't use that filter, so it counts everything for it">{{ text }}</span>
+  {% endfor %}
+</div>
+{% endif %}
 {% else %}
 <div class="flex min-w-0 flex-wrap items-center gap-2">
   {% if tile.kind != "kpi" %}
@@ -21,7 +28,7 @@
 {% if view.skipped %}
 <div class="flex flex-wrap gap-1">
   {% for text in view.skipped %}
-  <span class="badge badge-warning badge-soft badge-sm cursor-help" title="This tile's data can't use that filter, so it shows everything for it">{{ text }}</span>
+  <span class="badge {% if tile|tile_strong %}badge-neutral{% else %}badge-warning badge-soft{% endif %} badge-sm cursor-help" title="This tile's data can't use that filter, so it shows everything for it">{{ text }}</span>
   {% endfor %}
 </div>
 {% endif %}
@@ -31,9 +38,9 @@
 
 {% elif tile.kind == "kpi" %}
 <div class="stat place-items-start p-0" title="The grand total of “{{ view.kpi_label }}” from the query “{{ view.name }}”{% if view.filtered_by %}, filtered by {{ view.filtered_by|join:', ' }}{% endif %}">
-  <div class="stat-title truncate">{{ view.kpi_label }}</div>
-  <div class="stat-value truncate tabular-nums text-primary">{{ view.kpi_value }}</div>
-  <div class="stat-desc truncate">{% if tile.subtitle %}{{ tile.subtitle }}{% else %}From <a href="{% url 'my_insights:query' %}?open={{ tile.query_id }}" class="link link-hover" title="Open this query">{{ view.name }}</a>{% endif %}</div>
+  <div class="stat-title truncate {% if tile|tile_strong %}text-current opacity-80{% endif %}">{{ view.kpi_label }}</div>
+  <div class="stat-value truncate tabular-nums {% if not tile|tile_strong %}text-primary{% endif %}">{{ view.kpi_value }}</div>
+  <div class="stat-desc truncate {% if tile|tile_strong %}text-current opacity-80{% endif %}">{% if tile.subtitle %}{{ tile.subtitle }}{% else %}From <a href="{% url 'my_insights:query' %}?open={{ tile.query_id }}" class="link link-hover" title="Open this query">{{ view.name }}</a>{% endif %}</div>
 </div>
 
 {% elif tile.kind == "chart" %}

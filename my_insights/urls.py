@@ -1,6 +1,15 @@
 from django.urls import path
 
-from . import chart_views, dashboard_views, export_views, link_views, query_views, views
+from . import (
+    api_views,
+    chart_views,
+    dashboard_views,
+    db_views,
+    export_views,
+    link_views,
+    query_views,
+    views,
+)
 
 app_name = "my_insights"
 
@@ -9,6 +18,12 @@ urlpatterns = [
     path("upload/", views.upload, name="upload"),
     path("clear/", views.clear, name="clear"),
     path("keep-alive/", views.keep_alive, name="keep_alive"),
+    path("database/connect/", db_views.db_connect_view, name="db_connect"),
+    path("database/<str:token>/import/", db_views.db_import, name="db_import"),
+    path("database/<str:token>/cancel/", db_views.db_cancel, name="db_cancel"),
+    path("api/test/", api_views.api_test, name="api_test"),
+    path("api/import/", api_views.api_import, name="api_import"),
+    path("datasets/<int:dataset_id>/refresh/", db_views.dataset_refresh, name="dataset_refresh"),
     path("datasets/<int:dataset_id>/", views.dataset_detail, name="dataset"),
     path("datasets/<int:dataset_id>/rename/", views.dataset_rename, name="dataset_rename"),
     path("datasets/<int:dataset_id>/remove/", views.dataset_remove, name="dataset_remove"),
@@ -59,6 +74,11 @@ urlpatterns = [
         "dashboard/<int:dashboard_id>/tile/<int:tile_id>/",
         dashboard_views.tile_view,
         name="dashboard_tile",
+    ),
+    path(
+        "dashboard/<int:dashboard_id>/tile/<int:tile_id>/note-preview/",
+        dashboard_views.note_preview,
+        name="note_preview",
     ),
     path(
         "dashboard/<int:dashboard_id>/tile/<int:tile_id>/remove/",

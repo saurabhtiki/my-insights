@@ -1,0 +1,76 @@
+<form id="api-form" x-show="source === 'api'" x-cloak class="card card-border bg-base-100"
+      method="post" action="{% url 'my_insights:api_import' %}"
+      hx-post="{% url 'my_insights:api_import' %}" hx-target="#workspace-panel" hx-swap="outerHTML"
+      hx-disabled-elt="find button"
+      x-data="{ method: 'GET' }">
+  {% csrf_token %}
+  <div class="card-body gap-4">
+    <div class="grid gap-3 md:grid-cols-[8rem_1fr]">
+      <label class="form-control">
+        <span class="label text-sm" title="GET just reads. Some APIs only give data for a POST with a Body.">Method</span>
+        <select name="method" x-model="method" class="select select-sm w-full" title="GET just reads. Some APIs only give data for a POST with a Body.">
+          <option>GET</option>
+          <option>POST</option>
+        </select>
+      </label>
+      <label class="form-control">
+        <span class="label text-sm">URL</span>
+        <input name="url" type="url" required maxlength="2000" class="input input-sm w-full font-mono"
+               placeholder="https://api.example.com/v1/orders?from=2026-04-01"
+               title="The full web address that returns JSON, e.g. https://api.example.com/v1/orders">
+      </label>
+    </div>
+
+    <div class="grid gap-3 md:grid-cols-2">
+      <label class="form-control">
+        <span class="label text-sm">Headers <span class="text-base-content/50">(optional)</span></span>
+        <textarea name="headers" rows="3" spellcheck="false" autocomplete="off" class="textarea textarea-sm w-full font-mono"
+                  placeholder="Authorization: Bearer abc123&#10;X-Api-Key: …"
+                  title="One per line, as Name: value. Usually the API key goes here. It is kept in memory only (for Refresh) and never saved."></textarea>
+      </label>
+      <label class="form-control" x-show="method === 'POST'">
+        <span class="label text-sm">Body <span class="text-base-content/50">(JSON)</span></span>
+        <textarea name="body" rows="3" spellcheck="false" class="textarea textarea-sm w-full font-mono"
+                  placeholder='{"from": "2026-04-01", "to": "2026-06-30"}'
+                  title="What the API expects with the POST, as JSON. Leave empty to send {}."></textarea>
+      </label>
+    </div>
+
+    <div class="grid gap-3 md:grid-cols-2">
+      <label class="form-control">
+        <span class="label text-sm">Rows at <span class="text-base-content/50">(optional)</span>
+          <span class="tooltip tooltip-bottom" data-tip="Leave it empty to load every list in the reply, one dataset each. If the reply is {&quot;data&quot;: {&quot;orders&quot;: [ … ], &quot;shops&quot;: [ … ]}} you get sales – orders and sales – shops. To load only one list, type its path: data.orders (each name you pass through, joined by dots). Click Test to see the lists found.">
+            <span class="badge badge-ghost badge-xs cursor-help">?</span>
+          </span>
+        </span>
+        <input name="rows_at" maxlength="200" class="input input-sm w-full font-mono" placeholder="e.g. data.orders">
+        <span class="text-xs text-base-content/60">Empty = load every list, one dataset each. Type a path to load just that one.</span>
+      </label>
+      <label class="form-control">
+        <span class="label text-sm">Dataset name <span class="text-base-content/50">(optional)</span>
+          <span class="tooltip tooltip-bottom" data-tip="The name you will see for this data on the home page, in queries and in charts. Leave it empty and the last part of the URL is used: https://shop.com/api/orders → orders.">
+            <span class="badge badge-ghost badge-xs cursor-help">?</span>
+          </span>
+        </span>
+        <input name="name" maxlength="100" class="input input-sm w-full" placeholder="e.g. Orders">
+        <span class="text-xs text-base-content/60">Empty = use the end of the URL (…/api/orders → orders).</span>
+      </label>
+    </div>
+
+    <div id="api-test-result"></div>
+
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <p class="text-xs text-base-content/60">Fetched once when you click. Use <b>Refresh</b> on the dataset to fetch again. Nested fields become columns; lists of objects become linked datasets.</p>
+      <div class="flex gap-2">
+        <button type="button" class="btn btn-sm"
+                hx-post="{% url 'my_insights:api_test' %}" hx-target="#api-test-result" hx-swap="innerHTML" hx-include="#api-form"
+                title="Fetch once and show the rows and columns found, without loading anything">
+          <span class="loading loading-spinner loading-xs htmx-indicator"></span>Test
+        </button>
+        <button type="submit" class="btn btn-sm btn-primary" title="Fetch the data and load it as a dataset">
+          <span class="loading loading-spinner loading-xs htmx-indicator"></span>Import
+        </button>
+      </div>
+    </div>
+  </div>
+</form>

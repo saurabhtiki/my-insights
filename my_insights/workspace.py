@@ -20,6 +20,9 @@ logger = logging.getLogger(__name__)
 
 SESSION_KEY = "my_insights_workspace"
 MB = 1024 * 1024
+# JSON: the row number column of a main dataset, and its children's link back to it.
+ROW_COLUMN = "_row"
+PARENT_COLUMN = "_parent_row"
 
 
 class ServerBusy(Exception):
@@ -175,6 +178,16 @@ class SavedChart:
 
 
 @dataclass
+class NoteValue:
+    """A live number inside a note: a saved query's value, worked out like a KPI.
+    Shown where the note's text has [[label]], e.g. [[Avg of Selling price]] → ₹ 1,245.50."""
+
+    query_id: int
+    value_key: str
+    label: str
+
+
+@dataclass
 class DashboardTile:
     """One box on a dashboard. Chart / Table / KPI tiles point at a saved chart or query (by
     id, not a copy), so editing the chart changes the tile. Holds no data."""
@@ -187,6 +200,9 @@ class DashboardTile:
     title: str = ""  # KPI title ("" = the value's name)
     subtitle: str = ""  # KPI: a small line under the number
     text: str = ""  # note
+    values: list[NoteValue] = field(default_factory=list)  # note: live values in the text
+    color: str = ""  # KPI / note: "" (plain) or a TILE_COLORS key, e.g. green
+    tone: str = "soft"  # soft (light tint) | strong (full colour)
     width: str = "half"  # third | half | two_thirds | full
     height: str = "short"  # short | tall
 
@@ -211,6 +227,55 @@ class Dashboard:
 
 
 @dataclass
+class ApiSource:
+    """Where an API dataset came from, so Refresh can fetch it again. Memory only: never saved,
+    exported or put in a recipe (headers may hold a key)."""
+
+    url: str
+    method: str = "GET"  # GET | POST
+    headers: str = ""  # one "Name: value" per line, as typed
+    body: str = ""  # JSON, POST only
+    rows_at: str = ""  # e.g. "data.results"; "" = every list found
+    name: str = ""  # the name given at import, e.g. "sales" (new lists on Refresh use it)
+
+
+@dataclass
+class DbServer:
+    """A Postgres / MySQL server the user connected to. Memory only: never saved, exported,
+    logged or put in a recipe. `repr` hides the password."""
+
+    kind: str  # "postgres" | "mysql"
+    host: str
+    port: int
+    database: str
+    user: str
+    password: str = field(default="", repr=False)
+    require_ssl: bool = False
+
+    @property
+    def label(self) -> str:
+        """e.g. erp on 192.168.1.20"""
+        return f"{self.database} on {self.host}"
+
+    @property
+    def kind_title(self) -> str:
+        return {"postgres": "PostgreSQL", "mysql": "MySQL"}.get(self.kind, self.kind)
+
+    @property
+    def place(self) -> tuple:
+        """Which server, database and user (not the password): one pick list each."""
+        return (self.kind, self.host.casefold(), self.port, self.database, self.user)
+
+
+@dataclass
+class DbSource:
+    """Where a server dataset came from, so Refresh can read it again (memory only)."""
+
+    server: DbServer
+    select: str  # the SQL that is run, e.g. SELECT * FROM "sales"."orders"
+
+
+@dataclass
 class Dataset:
     dataset_id: int
     name: str
@@ -221,10 +286,52 @@ class Dataset:
     link: LinkSpec | None = None  # set for a combined dataset
     query_id: int | None = None  # set for a dataset made from a saved query's result
     calculated: list[CalculatedField] = field(default_factory=list)
+    # JSON: a list of objects inside each row becomes a child dataset, e.g. "orders – items"
+    # (parent_id = orders, child_path = "items"). Removing the parent removes its children.
+    parent_id: int | None = None
+    child_path: str = ""
+    list_path: str = ""  # JSON: where its rows were, e.g. "data.orders" ("" = top level)
+    # Set on each list imported from an API. Lists from one import share the same object,
+    # so Refresh updates them together.
+    api_source: ApiSource | None = None
+    db_source: DbSource | None = None  # set on each table / own query read from a server
+    notice: str = ""  # e.g. "Not in the latest API reply"
+    # Database foreign keys: (column, lookup dataset id, lookup column), shown as top suggestions
+    foreign_keys: list[tuple[str, int, str]] = field(default_factory=list)
 
     @property
     def flagged_count(self) -> int:
         return sum(1 for column in self.columns if column.mixed)
+
+
+@dataclass
+class DbTable:
+    """A table or view listed in a database's pick list."""
+
+    name: str  # as shown, e.g. "orders" or "sales.orders"
+    kind: str  # "table" | "view"
+    row_count: int | None  # None = not known (a server's view, or never analysed)
+    columns: list[str] = field(default_factory=list)
+    select: str = ""  # the SQL that reads it, e.g. SELECT * FROM "sales"."orders"
+    estimated: bool = False  # True: row_count is the server's estimate ("about 12,000 rows")
+
+
+@dataclass
+class PendingDb:
+    """A database waiting for the user to tick tables. Memory only. Either an uploaded SQLite
+    file (an in-memory, read-only sqlite3 connection, closed on Import, Cancel or when the
+    workspace goes) or a server (`server` set, no connection kept: each step connects again)."""
+
+    token: str
+    file_name: str  # "shop.db", or the server's label "erp on 192.168.1.20"
+    connection: object | None  # sqlite3.Connection; None for a server
+    tables: list[DbTable]
+    server: DbServer | None = None
+
+    @property
+    def stem(self) -> str:
+        """shop.db → shop; a server → its database name, e.g. erp"""
+        return self.server.database if self.server else self.file_name.rsplit(".", 1)[0]
 
 
 class Workspace:
@@ -259,6 +366,8 @@ class Workspace:
         self.dashboards: dict[int, Dashboard] = {}
         self._next_dashboard_id = 1
         self.notice = ""  # a problem to show on the next page (after a redirect)
+        self.pending_databases: dict[str, PendingDb] = {}
+        self._next_pending = 1
 
     def new_dashboard_id(self) -> int:
         dashboard_id = self._next_dashboard_id
@@ -331,7 +440,10 @@ class Workspace:
 
     def sources_of(self, dataset: Dataset) -> list[int]:
         """The datasets this one is built from: a combined dataset's parts, or the dataset
-        of the query a query-dataset was made from. [] for an uploaded file."""
+        of the query a query-dataset was made from, a JSON child's parent. [] for an uploaded
+        file."""
+        if dataset.parent_id is not None:
+            return [dataset.parent_id]
         if dataset.link is not None:
             return dataset.link.source_ids()
         if dataset.query_id is not None:
@@ -410,8 +522,24 @@ class Workspace:
         except duckdb.Error:
             logger.exception("Could not read DuckDB memory use")
 
+    def add_pending(
+        self, file_name: str, connection, tables: list, server: DbServer | None = None
+    ) -> PendingDb:
+        token = str(self._next_pending)
+        self._next_pending += 1
+        pending = PendingDb(token, file_name, connection, tables, server)
+        self.pending_databases[token] = pending
+        return pending
+
+    def drop_pending(self, token: str) -> None:
+        pending = self.pending_databases.pop(token, None)
+        if pending is not None and pending.connection is not None:
+            pending.connection.close()
+
     def close(self) -> None:
         with self.lock:
+            for token in list(self.pending_databases):
+                self.drop_pending(token)
             self.datasets.clear()
             self.connection.close()
 

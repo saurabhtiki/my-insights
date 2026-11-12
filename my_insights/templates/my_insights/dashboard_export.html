@@ -2,7 +2,7 @@
 A dashboard saved as one HTML file (export_views.dashboard_export). It stands alone: no
 links back to the app. Charts are drawn by ECharts from the internet, so hover works; the
 numbers, tables, KPIs and notes are in the file itself.
-{% endcomment %}<!doctype html>
+{% endcomment %}{% load my_insights %}<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -35,21 +35,22 @@ numbers, tables, KPIs and notes are in the file itself.
 
   <div class="grid grid-cols-12 items-start gap-4">
     {% for item in tiles %}{% with tile=item.tile view=item.view %}
-    <article class="card card-border col-span-12 min-w-0 bg-base-100
+    <article class="card card-border col-span-12 min-w-0 {{ tile|tile_color }}
                     {% if tile.width == 'third' %}md:col-span-6 lg:col-span-4{% elif tile.width == 'half' %}md:col-span-6{% elif tile.width == 'two_thirds' %}lg:col-span-8{% endif %}">
       <div class="card-body min-w-0 gap-2 p-4">
         {% if tile.kind == "note" %}
-        <div class="min-w-0 break-words text-sm leading-relaxed [&_a]:text-primary [&_a]:underline">{{ tile.text|urlize|linebreaksbr }}</div>
+        <div class="min-w-0 break-words text-sm leading-relaxed [&_a]:underline {% if tile|tile_strong %}[&_a]:text-inherit{% else %}[&_a]:text-primary{% endif %}">{{ view.note_html }}</div>
+        {% for text in view.skipped %}<span class="badge {% if tile|tile_strong %}badge-neutral{% else %}badge-warning badge-soft{% endif %} badge-sm">{{ text }}</span>{% endfor %}
         {% else %}
         {% if tile.kind != "kpi" %}<h2 class="card-title min-w-0 text-base">{{ view.name|default:"Removed" }}</h2>{% endif %}
-        {% for text in view.skipped %}<span class="badge badge-warning badge-soft badge-sm">{{ text }}</span>{% endfor %}
+        {% for text in view.skipped %}<span class="badge {% if tile|tile_strong %}badge-neutral{% else %}badge-warning badge-soft{% endif %} badge-sm">{{ text }}</span>{% endfor %}
         {% if view.problem %}
         <div role="alert" class="alert alert-soft alert-warning text-sm"><span>{{ view.problem }}</span></div>
         {% elif tile.kind == "kpi" %}
         <div class="stat place-items-start p-0">
-          <div class="stat-title">{{ view.kpi_label }}</div>
-          <div class="stat-value tabular-nums text-primary">{{ view.kpi_value }}</div>
-          <div class="stat-desc">{% if tile.subtitle %}{{ tile.subtitle }}{% else %}From {{ view.name }}{% endif %}</div>
+          <div class="stat-title {% if tile|tile_strong %}text-current opacity-80{% endif %}">{{ view.kpi_label }}</div>
+          <div class="stat-value tabular-nums {% if not tile|tile_strong %}text-primary{% endif %}">{{ view.kpi_value }}</div>
+          <div class="stat-desc {% if tile|tile_strong %}text-current opacity-80{% endif %}">{% if tile.subtitle %}{{ tile.subtitle }}{% else %}From {{ view.name }}{% endif %}</div>
         </div>
         {% elif tile.kind == "chart" %}
         {{ view.option|json_script:item.option_id }}

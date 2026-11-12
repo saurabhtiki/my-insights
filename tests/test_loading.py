@@ -137,7 +137,7 @@ def test_same_name_gets_a_number(workspace):
     ("file_name", "data", "message"),
     [
         ("old.xls", b"x", "Save As"),
-        ("notes.txt", b"x", "Only CSV, XLSX and XLSM"),
+        ("notes.txt", b"x", r"Only CSV, XLSX, XLSM, JSON, JSONL and SQLite \(\.db\)"),
         ("empty.csv", b"  \n\n", "empty"),
         ("header.csv", b"A,B\n", "no data rows"),
         ("binary.csv", b"PK\x03\x04\x00\x00junk", "not a readable text CSV"),

@@ -172,11 +172,99 @@
       edit() {
         before = fields(this.$root).map((field) => field.value);
         this.editing = true;
+        // a note's preview is drawn when its editor opens, not on page load
+        this.$root.querySelectorAll("[data-note-editor] textarea").forEach((box) => htmx.trigger(box, "note-refresh"));
         this.$nextTick(() => { const first = fields(this.$root)[0]; if (first) first.focus(); });
       },
       cancel() {
         fields(this.$root).forEach((field, index) => { field.value = before[index]; });
+        this.$root.querySelectorAll("[data-note-editor]").forEach((note) => note.dispatchEvent(new CustomEvent("note-reset")));
         this.editing = false;
+      },
+    };
+  }
+
+  // A Note tile's editor: the toolbar adds marks to the text, "Insert value" adds [[name]].
+  // Marks: **bold** _italic_ __underline__; at a line's start "# " Heading, "## " Large,
+  // "-# " Small, "- " bullet, "1. " numbered. The server turns them into the note.
+  const SIZE_MARK = /^(# |## |-# )/;
+  const LIST_MARK = /^(- |\d{1,4}\. )/;
+  const LABEL_LENGTH = 100;  // the server keeps value names to this, spaces collapsed
+  const cleanLabel = (text) => text.replace(/[\[\]]/g, "").replace(/\s+/g, " ").trim();
+  function noteEditor(values, max) {
+    return {
+      values,
+      max,
+      box() { return this.$refs.text; },
+      refresh() {
+        this.box().focus();
+        this.$nextTick(() => htmx.trigger(this.box(), "note-refresh"));  // after :value updates
+      },
+      reset() {
+        try { this.values = JSON.parse(this.$refs.values.value || "[]"); } catch (error) { this.values = []; }
+        this.$nextTick(() => htmx.trigger(this.box(), "note-refresh"));
+      },
+      wrap(mark) {
+        const box = this.box(), start = box.selectionStart, end = box.selectionEnd;
+        const words = box.value.slice(start, end) || "text";
+        box.setRangeText(mark + words + mark, start, end);
+        box.setSelectionRange(start + mark.length, start + mark.length + words.length);
+        this.refresh();
+      },
+      // change every line the cursor or selection touches
+      lines(change) {
+        const box = this.box(), text = box.value;
+        const start = text.lastIndexOf("\n", box.selectionStart - 1) + 1;
+        let end = text.indexOf("\n", Math.max(box.selectionEnd - (box.selectionEnd > box.selectionStart ? 1 : 0), start));
+        if (end < 0) end = text.length;
+        const changed = change(text.slice(start, end).split("\n")).join("\n");
+        box.setRangeText(changed, start, end, "select");
+        this.refresh();
+      },
+      size(mark) {
+        if (!mark) return;
+        const keep = mark === "normal" ? "" : mark;
+        this.lines((lines) => lines.map((line) => keep + line.replace(SIZE_MARK, "")));
+      },
+      list(mark) {
+        const numbered = mark !== "- ";
+        const has = (line) => (numbered ? /^\d{1,4}\. /.test(line) : line.startsWith("- "));
+        this.lines((lines) => {
+          if (lines.every(has)) return lines.map((line) => line.replace(LIST_MARK, ""));  // off again
+          return lines.map((line, index) => (numbered ? `${index + 1}. ` : "- ") + line.replace(LIST_MARK, ""));
+        });
+      },
+      insert() {
+        const choice = this.$refs.pick && this.$refs.pick.selectedOptions[0];
+        if (!choice || this.values.length >= this.max) return;
+        const base = cleanLabel(choice.dataset.label || choice.textContent);
+        let label = base.slice(0, LABEL_LENGTH), number = 2;
+        while (this.values.some((value) => value.label === label)) {
+          const suffix = ` ${number++}`;
+          label = base.slice(0, LABEL_LENGTH - suffix.length).trim() + suffix;
+        }
+        this.values.push({ ref: choice.value, label });
+        const box = this.box();
+        box.setRangeText(`[[${label}]]`, box.selectionStart, box.selectionEnd, "end");
+        this.refresh();
+      },
+      rename(index) {
+        const old = this.values[index].label;
+        const name = cleanLabel(window.prompt("New name for this value", old) || "").slice(0, LABEL_LENGTH).trim();
+        if (!name || name === old) return;
+        if (this.values.some((value) => value.label === name)) {
+          window.alert(`Another value in this note is already called “${name}”.`);
+          return;
+        }
+        this.values[index].label = name;
+        this.box().value = this.box().value.split(`[[${old}]]`).join(`[[${name}]]`);
+        this.refresh();
+      },
+      remove(index) {
+        const old = this.values[index].label;
+        this.values.splice(index, 1);
+        this.box().value = this.box().value.split(`[[${old}]]`).join("");
+        this.refresh();
       },
     };
   }

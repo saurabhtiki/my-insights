@@ -24,6 +24,26 @@ DEFAULTS = {
     # Memory all users' data together may use. None = half of the server's RAM.
     "TOTAL_MEMORY_MB": None,
     "MEMORY_WARN_PERCENT": 80,  # show a "memory is high" banner above this share of the budget
+    # "From API" import: fetch JSON from a web address.
+    "ALLOW_API_IMPORT": True,
+    # True = refuse addresses inside the company network or on this server (localhost, 10.x,
+    # 192.168.x …) unless their host name or IP is in API_ALLOWED_HOSTS, e.g. ["erp.local"].
+    # Turn on when users you don't fully trust can import: they could otherwise reach
+    # internal services through this server.
+    "API_BLOCK_INTERNAL": False,
+    "API_ALLOWED_HOSTS": [],
+    "API_TIMEOUT_SECONDS": 30,
+    # Upload a SQLite database file (.db, .sqlite, .sqlite3) and pick its tables. Read in
+    # memory only, never written to disk.
+    "ALLOW_DB_IMPORT": True,
+    # "From database": read tables from a live PostgreSQL / MySQL server. Needs the driver:
+    # uv add "my-insights[postgres]" or "my-insights[mysql]". Every read is read-only.
+    "ALLOW_DB_CONNECT": True,
+    # [] = any server. Otherwise only these host names / IPs, e.g. ["erp.local", "10.0.0.5"].
+    "DB_ALLOWED_HOSTS": [],
+    "DB_CONNECT_SECONDS": 15,  # wait this long for the server to answer
+    # Longest one read may run on the server (a table import or an own query), then it stops.
+    "DB_QUERY_SECONDS": 300,
     "IDLE_WARN_MINUTES": 25,
     "IDLE_CLEAR_MINUTES": 30,
 }

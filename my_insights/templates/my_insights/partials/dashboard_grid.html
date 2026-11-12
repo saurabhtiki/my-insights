@@ -6,7 +6,7 @@ Each tile box loads its own content (dashboard_tile.html) on load, and again on
 "tile-reload" (a filter on one of its fields changed). In Edit mode the grid is one form:
 any change (drag, size, text) saves and redraws it. Only the size menus save on "change":
 Sortable fires its own "change" event mid-drag, which must not redraw the grid.
-{% endcomment %}
+{% endcomment %}{% load my_insights %}
 <{% if edit %}form{% else %}div{% endif %} id="dashboard-grid"
   {% if edit %}hx-post="{% url 'my_insights:dashboard_layout' dashboard.dashboard_id %}" hx-trigger="change[target.matches('[data-tile-size]')], layout-changed"
   hx-target="this" hx-swap="outerHTML" hx-indicator="#layout-busy" aria-label="Tiles (Edit mode)"{% endif %}>
@@ -16,12 +16,13 @@ Sortable fires its own "change" event mid-drag, which must not redraw the grid.
     {% for t in tiles %}{% with tile=t.tile %}
     <article data-tile="{{ tile.tile_id }}" data-fields="{{ t.fields }}"
              {% if edit and tile.kind == "kpi" or edit and tile.kind == "note" %}x-data="tileEditor()"{% endif %}
-             class="card card-border col-span-12 min-w-0 self-start bg-base-100
+             class="card card-border col-span-12 min-w-0 self-start {{ tile|tile_color }}
                     {% if tile.width == 'third' %}md:col-span-6 lg:col-span-4{% elif tile.width == 'half' %}md:col-span-6{% elif tile.width == 'two_thirds' %}lg:col-span-8{% endif %}
                     {% if edit %}border-dashed border-primary/40{% endif %}">
       {% if edit %}
       <input type="hidden" name="order" value="{{ tile.tile_id }}">
-      <div class="flex flex-wrap items-center gap-2 border-b border-base-300 px-3 py-2">
+      {# the edit bar and editor stay plain on a coloured card, so they stay readable #}
+      <div class="flex flex-wrap items-center gap-2 rounded-t-box border-b border-base-300 bg-base-100 px-3 py-2 text-base-content">
         <span data-tile-handle class="cursor-grab select-none text-base-content/50" title="Drag to move this tile">⠿</span>
         <span class="badge badge-ghost badge-sm" title="{{ t.kind_label }} tile">{{ t.icon }} {{ t.kind_label }}</span>
         <span class="flex-1"></span>
@@ -34,8 +35,15 @@ Sortable fires its own "change" event mid-drag, which must not redraw the grid.
         </select>
         {% endif %}
         {% if tile.kind == "kpi" or tile.kind == "note" %}
+        <div class="dropdown dropdown-end">
+          <div tabindex="0" role="button" class="btn btn-ghost btn-xs btn-square" aria-label="Card colour"
+               title="Colour of this card, e.g. green for sales, red for returns">🎨</div>
+          <div tabindex="0" class="dropdown-content z-30 mt-1 w-60 rounded-box border border-base-300 bg-base-100 p-3 text-base-content shadow-lg">
+            {% include "my_insights/partials/color_picker.html" with prefix=t.prefix color=tile.color tone=tile.tone save=True %}
+          </div>
+        </div>
         <button type="button" class="btn btn-ghost btn-xs btn-square" x-show="!editing" @click="edit()" aria-label="Edit the text"
-                title="{% if tile.kind == 'note' %}Change the note's text{% else %}Change the KPI's title and small line{% endif %}">✎</button>
+                title="{% if tile.kind == 'note' %}Change the note: text, formatting and live values{% else %}Change the KPI's title and small line{% endif %}">✎</button>
         {% endif %}
         <button type="button" class="btn btn-ghost btn-xs btn-square text-error" aria-label="Remove this tile"
                 hx-post="{% url 'my_insights:tile_remove' dashboard.dashboard_id tile.tile_id %}" hx-target="#dashboard-grid" hx-swap="outerHTML"
@@ -43,15 +51,14 @@ Sortable fires its own "change" event mid-drag, which must not redraw the grid.
       </div>
       {% if tile.kind == "kpi" or tile.kind == "note" %}
       {# click-to-edit: shown only after ✎; saved with Save, undone with Cancel #}
-      <div data-tile-editor x-show="editing" x-cloak class="space-y-2 px-3 py-3">
+      <div data-tile-editor x-show="editing" x-cloak class="space-y-2 bg-base-100 px-3 py-3 text-base-content">
         {% if tile.kind == "kpi" %}
         <input name="t{{ tile.tile_id }}_title" value="{{ tile.title }}" maxlength="100" class="input input-sm w-full"
                placeholder="Title (empty = the value's name)" aria-label="KPI title" title="The words above the number. Leave empty to use the value's name">
         <input name="t{{ tile.tile_id }}_subtitle" value="{{ tile.subtitle }}" maxlength="120" class="input input-sm w-full"
                placeholder="Small line under it (optional)" aria-label="KPI note" title="Optional: a small line under the number, e.g. April to date">
         {% else %}
-        <textarea name="t{{ tile.tile_id }}_text" rows="6" maxlength="2000" class="textarea textarea-sm w-full" aria-label="Note text"
-                  title="Plain text. New lines are kept and links (https://…) become clickable.">{{ tile.text }}</textarea>
+        {% include "my_insights/partials/note_editor.html" %}
         {% endif %}
         <div class="flex justify-end gap-2">
           <button type="button" class="btn btn-ghost btn-xs" @click="cancel()" title="Close without saving the changes">Cancel</button>

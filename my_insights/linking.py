@@ -14,7 +14,15 @@ import duckdb
 
 from . import conf
 from .loading import fill_samples, quote_name
-from .workspace import ColumnProfile, Dataset, LinkSpec, LinkStep, Workspace
+from .workspace import (
+    PARENT_COLUMN,
+    ROW_COLUMN,
+    ColumnProfile,
+    Dataset,
+    LinkSpec,
+    LinkStep,
+    Workspace,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +110,7 @@ class Suggestion:
     lookup_column: str
     matched: int
     total: int
+    from_database: bool = False  # a foreign key in the uploaded SQLite file
 
     @property
     def match_percent(self) -> int:
@@ -512,6 +521,31 @@ def suggest_links(workspace: Workspace) -> list[Suggestion]:
                         best[(main.dataset_id, lookup.dataset_id)] = suggestion
     suggestions = list(best.values())
     suggestions.sort(key=lambda s: -s.match_percent)
+    # A JSON child list and its parent: always linked by _parent_row → _row, shown first.
+    family = [
+        Suggestion(
+            child.dataset_id, child.parent_id, PARENT_COLUMN, ROW_COLUMN, *[child.row_count] * 2
+        )
+        for child in base
+        if child.parent_id in {d.dataset_id for d in base}
+        and _column(child, PARENT_COLUMN)
+        and _column(workspace.datasets[child.parent_id], ROW_COLUMN)
+    ]
+    # A foreign key in an uploaded SQLite file (orders.customer_id → customers.id): also first.
+    by_id = {d.dataset_id: d for d in base}
+    for main in base:
+        for column, lookup_id, lookup_column in main.foreign_keys:
+            lookup = by_id.get(lookup_id)
+            left, right = _column(main, column), lookup and _column(lookup, lookup_column)
+            if left and right:
+                matched, total = _overlap(connection, main, left, lookup, right)
+                family.append(
+                    Suggestion(
+                        main.dataset_id, lookup_id, column, lookup_column, matched, total, True
+                    )
+                )
+    pairs = {pair for s in family for pair in ((s.main_id, s.lookup_id), (s.lookup_id, s.main_id))}
+    suggestions = family + [s for s in suggestions if (s.main_id, s.lookup_id) not in pairs]
     workspace.suggestion_cache = (key, suggestions)
     return suggestions
 

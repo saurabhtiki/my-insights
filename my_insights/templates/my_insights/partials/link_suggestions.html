@@ -4,7 +4,8 @@
   <div class="min-w-0">
     <p><b>{{ group.main.name }}</b> can pick up details from
       {% for item in group.items %}<b>{{ item.lookup.name }}</b>{% if item.via %} via {{ item.via.name }}{% endif %}
-      <span class="text-base-content/70" title="{{ item.suggestion.matched }} of {{ item.suggestion.total }} filled values match">({{ item.suggestion.main_column }} = {{ item.suggestion.lookup_column }}, {{ item.suggestion.match_percent }}% match)</span>{% if not forloop.last %}, {% endif %}{% endfor %}.
+      <span class="text-base-content/70" title="{{ item.suggestion.matched }} of {{ item.suggestion.total }} filled values match">({{ item.suggestion.main_column }} = {{ item.suggestion.lookup_column }}, {{ item.suggestion.match_percent }}% match)</span>{% if item.suggestion.from_database %}
+      <span class="badge badge-info badge-soft badge-sm cursor-help" title="The database file itself says these tables are linked by this column (a foreign key)">from the database</span>{% endif %}{% if not forloop.last %}, {% endif %}{% endfor %}.
     </p>
   </div>
   <a href="{% url 'my_insights:link' %}?main={{ group.main.dataset_id }}" class="btn btn-sm btn-primary"

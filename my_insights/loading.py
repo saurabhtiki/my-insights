@@ -1,4 +1,4 @@
-"""Read an uploaded CSV / Excel file (bytes in memory) into a workspace's DuckDB database.
+"""Read an uploaded CSV / Excel / JSON file (bytes in memory) into a workspace's DuckDB database.
 
 Steps for every table (a CSV file, or one Excel sheet):
 1. Copy the cells as plain text into a "raw" table, with the row number in the file.
@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 CSV_TYPES = {".csv"}
 EXCEL_TYPES = {".xlsx", ".xlsm"}
+JSON_TYPES = {".json", ".jsonl"}
 RAW_TABLE = "_raw_load"
 EXCEL_BATCH_ROWS = 20_000
 SAMPLE_ROWS = 200
@@ -76,8 +77,10 @@ def load_file(workspace: Workspace, file_name: str, data: bytes | io.BytesIO) ->
             "Old Excel format (.xls) is not supported. Open it in Excel and "
             "“Save As” .xlsx, then upload again."
         )
-    if suffix not in CSV_TYPES | EXCEL_TYPES:
-        raise UploadRejected("Only CSV, XLSX and XLSM files can be uploaded.")
+    if suffix not in CSV_TYPES | EXCEL_TYPES | JSON_TYPES:
+        raise UploadRejected(
+            "Only CSV, XLSX, XLSM, JSON, JSONL and SQLite (.db) files can be uploaded."
+        )
     max_mb = conf.get("MAX_FILE_MB")
     size = source.getbuffer().nbytes
     if size > max_mb * 1024 * 1024:
@@ -91,6 +94,12 @@ def load_file(workspace: Workspace, file_name: str, data: bytes | io.BytesIO) ->
         try:
             if suffix in CSV_TYPES:
                 return [_load_csv(workspace, stem, file_name, source)]
+            if suffix in JSON_TYPES:
+                from .json_loading import load_json  # it imports this module
+
+                return load_json(
+                    workspace, stem, file_name, source.getvalue(), lines=suffix == ".jsonl"
+                )
             return _load_excel(workspace, stem, file_name, source)
         except duckdb.OutOfMemoryException as error:
             logger.warning("Out of memory loading %s: %s", file_name, error)
@@ -189,13 +198,28 @@ def _load_excel(
 
 
 def _excel_sheet_to_raw(workspace: Workspace, sheet, label: str) -> None:
-    """Stream the sheet into the raw table in batches (as CSV text, all in memory)."""
-    connection = workspace.connection
-    width = sheet.width
+    max_rows = conf.get("MAX_ROWS")
+
+    def numbered_rows():
+        filled_rows = 0
+        for index, row in enumerate(sheet.iter_rows()):
+            cells = [_excel_cell_text(value) for value in row]
+            if any(cells):
+                filled_rows += 1
+                if filled_rows > max_rows + 1:  # +1 for the header row
+                    raise UploadRejected(_too_many_rows_message(max_rows))
+                yield index + 1, cells
+        logger.info("Read %s rows from %s", filled_rows, label)
+
+    write_raw(workspace.connection, sheet.width, numbered_rows())
+
+
+def write_raw(connection, width: int, numbered_rows) -> None:
+    """Stream (row number, [cell text, …]) rows into the raw table in batches (as CSV text,
+    all in memory). Used for Excel sheets and JSON."""
     names = [f"column{index}" for index in range(width)]
     columns_sql = ", ".join(f"{name} VARCHAR" for name in names)
     connection.execute(f"CREATE TABLE {RAW_TABLE} (row_no BIGINT, {columns_sql})")
-    max_rows = conf.get("MAX_ROWS")
     column_types = {"row_no": "BIGINT", **{name: "VARCHAR" for name in names}}
 
     buffer = io.StringIO()
@@ -221,19 +245,12 @@ def _excel_sheet_to_raw(workspace: Workspace, sheet, label: str) -> None:
         writer = csv.writer(buffer, lineterminator="\n")
         pending = 0
 
-    filled_rows = 0
-    for index, row in enumerate(sheet.iter_rows()):
-        cells = [_excel_cell_text(value) for value in row]
-        if any(cells):
-            filled_rows += 1
-            if filled_rows > max_rows + 1:  # +1 for the header row
-                raise UploadRejected(_too_many_rows_message(max_rows))
-            writer.writerow([index + 1, *cells])
-            pending += 1
-            if pending >= EXCEL_BATCH_ROWS:
-                flush()
+    for row_no, cells in numbered_rows:
+        writer.writerow([row_no, *cells])
+        pending += 1
+        if pending >= EXCEL_BATCH_ROWS:
+            flush()
     flush()
-    logger.info("Read %s rows from %s", filled_rows, label)
 
 
 def _excel_cell_text(value) -> str:

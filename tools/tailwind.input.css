@@ -1,10 +1,11 @@
 /* Source for static/css/tailwind.css (demo site). Rebuild after changing classes:
    .\tools\build_css.ps1
    Tailwind keeps only the class names it finds in the folders below. A host app using
-   My Insights must add its own @source line for my_insights/templates. */
+   My Insights must add its own @source line for the my_insights folder (its templates and
+   the .py files: tile colours are listed in dashboard.py). */
 @import "tailwindcss" source(none);
 @source "../demo/templates";
-@source "../my_insights/templates";
+@source "../my_insights";
 @source "../.venv/Lib/site-packages/django_datatable/templates";
 @plugin "./daisyui.mjs" {
   themes: false;

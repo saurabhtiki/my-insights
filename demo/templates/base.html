@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Demo{% endblock %} · My Insights demo</title>
-  <link href="{% static 'css/tailwind.css' %}" rel="stylesheet">
+  <link href="{% static 'css/tailwind.css' %}?v={{ css_version }}" rel="stylesheet">
   <script src="{% static 'vendor/htmx-2.0.6.min.js' %}"></script>
   <link href="{% static 'django_datatable/datatable.css' %}" rel="stylesheet">
   <script defer src="{% static 'django_datatable/datatable.js' %}"></script>

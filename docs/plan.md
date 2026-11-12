@@ -1,103 +1,84 @@
-# Plan — Phase 6: Export (my-insights)
+# Plan: Phase 8c, Import from a live Postgres / MySQL database (my-insights)
 
-**Status: done.** 267 tests pass (27 new). Built as planned, with these changes:
-- **Excel writer is xlsxwriter**, not openpyxl: 3× faster (2 lakh rows × 4 columns in 4 s).
-  openpyxl stays as a test-only tool for reading files back.
-- **Excel has a size limit** (agreed during build): the file is built in memory, never on disk,
-  and 2 lakh × 4 cells took about 285 MB. New setting `EXCEL_MAX_CELLS` (default 10 lakh cells).
-  Bigger answers get "Too big for Excel, download CSV". CSV streams from DuckDB in batches of
-  5,000 rows, so it has no such limit.
-- The query screen exports its current answer (the draft), so unsaved queries work too.
-- The datatable's own CSV button is hidden with CSS on result tables and Table tiles.
-- Export errors show a short page with "← Back" (a download link can't show a toast).
-- Code review fixes: export plans a copy of the draft; a Top N above the Excel limit is refused,
-  not silently cut; the CSV stream's cursor is opened inside its error handling; Across with no
-  Group by has no duplicate Total row.
-- Known gaps / follow-ups:
-  - The datatable's CSV button stays hidden with CSS (decided: no `csv=False` package option).
-  - The HTML file's table is a plain `<table>` (a static snapshot can't use the server-side
-    datatable). This is an exception to the "use django-datatable" rule. It has its own small
-    search box and ⤓ CSV button that work inside the file, on the rows it holds (max 500).
-- Fixed after review: the HTML file fades the other bars / slices so the clicked one stands
-  out; Excel numbers at or below −1 lakh get their own lakh format (−12,34,567); a saved query
-  is "Not saved" only when it really differs from the saved copy (switching to the Chart tab
-  no longer greys out "Add to dashboard"); dashboard filters have a Clear button next to
-  Apply; the HTML file lists every dashboard filter (an empty one as "nothing picked, not used").
+**Status: done.** 412 tests pass (60 new in `tests/test_db_connect.py`; 6 live tests in
+`tests/test_db_live.py` passed against Postgres 17 and MySQL 8.4 in Docker). (Phase 8b plan: `plan_phase8b.md`.)
+
+Built as agreed, with these changes:
+- **No separate Test button**: Connect lists the tables, which is the test.
+- **Server tables start unticked** (a server may have hundreds); SQLite files stay all ticked.
+- **Settings**: `DB_CONNECT_SECONDS` (15) and `DB_QUERY_SECONDS` (300) instead of one
+  `DB_TIMEOUT_SECONDS`, so a big import isn't cut off by the connect wait.
+- **Safety (code review)**: the host must be a plain name or IP (no socket path or host list),
+  a password is required, and Postgres never reads this server's own `~/.pgpass`. Without
+  these, a user could reach the host app's own database with no password.
+- **MySQL**: `BOOLEAN` is really 0/1, so it loads as a number. Without "Require SSL" it still
+  encrypts when the server offers it.
+- **Refresh** shares `query_dataset.swap_in_fresh` with the API Refresh.
+
+Known gaps: Import and Refresh hold the user's workspace lock while reading the server (like
+file uploads), so that user's other tabs wait. Date-times are read to the second.
 
 ## Context
-Phase 5 (dashboards) is done, 240 tests. Users can build queries, charts and dashboards, but
-can't take them out of the app. Today the only download is the datatable's CSV link: it is cut at
-100,000 rows, the Table tile's link is broken (it downloads the dashboard page) and ignores click
-filters. Phase 6 adds proper exports. Recipes (save/load JSON) and AI come later.
+Phase 8b lets users upload a SQLite file. Most company data sits on a live Postgres or MySQL
+server. Phase 8c lets a user connect to one, tick tables (or write a SELECT), import them, and
+Refresh later. Data still lives in memory only; the password too.
 
 ## Goal (one line)
-Query results → CSV / Excel (full rows, formula-safe), every chart → PNG, dashboard → one HTML file.
+Open **From database**, fill in the server details, click **Connect**, tick tables or write a
+SELECT, click **Import**. Each becomes a normal dataset with a **Refresh** button.
 
-Examples:
-- "Sales by Branch" with 3 lakh rows → `Sales by Branch.xlsx`, all 3 lakh rows, ₹ format, Total row.
-- Dashboard "Monthly review" with `Branch = Delhi` clicked → `Monthly review.html` showing Delhi only.
-- A customer name `=HYPERLINK(...)` is saved as `'=HYPERLINK(...)` so Excel won't run it.
+Example: Postgres `erp` on `192.168.1.20`, user `report` →
+- pick list: ☑ orders (about 12,000 rows) ☑ customers (about 800 rows) ☐ sales.targets *view*
+- Own query: name `pune_orders`, `SELECT * FROM orders WHERE city = 'Pune'`
+- Import → **erp – orders**, **erp – customers**, **pune_orders**
+- Relate screen, first suggestion: `orders.customer_id = customers.id` ("from the database")
+- Next day: Refresh on **erp – orders** fetches today's rows.
 
-## Decisions (agreed)
-| # | Decision |
-|---|----------|
-| 1 | **Full result**: exports run the query again without the 100,000 preview cap. New setting `EXPORT_ROW_CAP` (default = `MAX_ROWS`, 2,000,000). Excel stops at 10,48,575 rows and notes it. |
-| 2 | **Excel cells are real values**: numbers + number format (Indian grouping, ₹ when the value uses it, decimals), dates as real dates shown `dd-mm-yyyy`. Bold header, frozen top row, autofilter, Total row at the bottom (from `result.totals`). |
-| 3 | **About sheet** in Excel: query name, datasets, filters used (incl. click filters), export time, "cut at N rows" if so. CSV stays plain data (no extra lines, so it opens cleanly anywhere). |
-| 4 | **Across** exports wide, like the screen (Branch \| Apr \| May …). |
-| 5 | **Formula escaping** in CSV and Excel: text starting `= + - @` (tab/CR too) gets a leading `'`. Real numbers like `-5` are left alone. Reuse `django_datatable.formula_safe`. |
-| 6 | **Export buttons**: one "⤓ Export ▾" menu (CSV · Excel) on the query result and on each Table tile, with tooltips. The datatable's own CSV link is turned off on these tables (if the package has no switch, leave it and note it — no package edits here). |
-| 7 | **Table tile export uses what you see**: saved global filters + current click filters (sent from the page like tile loads do). Fixes the broken tile CSV. |
-| 8 | **Chart PNG**: keep the query-screen button; add a small ⤓ PNG button on each dashboard chart tile that downloads only that chart (event carries the tile id). |
-| 9 | **Dashboard → HTML**: "⤓ HTML" button (view mode). One self-contained file, built on the server: title, export time, filter chips (saved + click), tiles in a simple CSS grid with the same widths. Charts are live ECharts (hover works) loaded from the CDN — **needs internet** to open. KPI and Note tiles as on screen. Table tiles show formatted text, first 500 rows, with "showing 500 of N" note. |
-| 10 | Not now: dashboard → Excel workbook, SVG charts, PDF, offline HTML, recipes. |
+## Decisions (agreed after grilling)
+| # | Topic | Decision |
+|---|-------|----------|
+| 1 | Who connects | The user types the details in a form (no admin presets). |
+| 2 | Driver | Python drivers: `psycopg` (Postgres) and `PyMySQL` (MySQL), as optional extras `my-insights[postgres]` / `[mysql]`. Missing driver → a clear message saying what to install. Rows go through the same text → type checks as CSV/SQLite. |
+| 3 | Where | A third home tab **From database** (next to Upload files and From API): type, host, port, database, user, password, Require SSL; **Test** and **Connect**. Then the same pick list as SQLite, plus an Own query box. |
+| 4 | Schemas | Every schema the user can read, except system ones. Names: `orders` for `public` (Postgres) / the chosen database (MySQL), `sales.orders` for others. |
+| 5 | Row counts | Quick estimate from the server's statistics ("about 12,000 rows"). The real MAX_ROWS check happens during import. |
+| 6 | Own query | Optional: Name + one SELECT (or WITH … SELECT). Several statements or anything else are refused before sending. Runs in a **read-only transaction** with a time limit. |
+| 7 | Read-only | Every read (tables too) runs in a read-only transaction. The tooltip also advises a read-only database user. |
+| 8 | Refresh | Yes, like API. The connection details (with password) stay in the session's memory only: never saved, exported, logged or put in a recipe. Refresh re-reads the table / re-runs the query. Logout/timeout forgets them. |
+| 9 | Network | Allowed by default (company servers are usually 10.x / 192.168.x). New settings `ALLOW_DB_CONNECT` (True) and `DB_ALLOWED_HOSTS` ([] = any; when set, only those hosts). |
+| 10 | SSL | Default "use if available"; a **Require SSL** tick box for cloud databases. No certificate upload. |
+| 11 | Foreign keys | From `information_schema`, same as 8b: top link suggestions, only between tables imported together. |
+| 12 | Names | "database – table"; Own query uses the name typed. `unique_name` for clashes. All or nothing per Import. |
+| 13 | Tests | Fake database for normal tests; live tests run only when `MY_INSIGHTS_TEST_POSTGRES` / `MY_INSIGHTS_TEST_MYSQL` is set. One run against Postgres and MySQL in Docker. |
 
 ## What we build
-1. **Dependency**: move `openpyxl` from dev to runtime (`uv add openpyxl`; write-only mode for speed).
-2. **Full-result fetch (`querying.py`)**
-   - `run_query(connection, plan, top_n, cap=None)`: when `cap` is given, `run_query` and `_spread_across` cut to it instead of `row_cap()`. `plan_query(..., cap=...)` already exists.
-   - New setting `EXPORT_ROW_CAP` in `conf.py`.
-3. **Export logic (new `exporting.py`)**
-   - `export_result(workspace, query, extra_filters)` → `QueryResult` with the export cap.
-   - `export_columns(result)`: the wide column list (Across included), same order as the screen.
-   - `csv_response(name, result)`: via `django_datatable.rows_csv_response` (BOM, streaming, formula-safe).
-   - `excel_response(name, result, about)`: openpyxl write-only workbook; `excel_number_format(column)` maps our format (₹, decimals, Indian grouping, %) to an Excel format string such as `[>=10000000]##\,##\,##\,##0;[>=100000]##\,##\,##0;##,##0` with ₹ prefix.
-   - `safe_filename(name)`.
-4. **Views (new `export_views.py`)** and urls
-   - `query/<id>/export/<csv|xlsx>/` (also works for the unsaved draft via `?draft=`).
-   - `dashboard/<id>/tile/<tile_id>/export/<csv|xlsx>/` — takes `clicks` like `tile_view`, uses `dashboard.build_tile` filters.
-   - `dashboard/<id>/export/html/` — POST with `clicks` from `Alpine.store("dash").json()`; loops `dashboard.tiles` through `build_tile`.
-   - Errors (missing query, removed source, too big) → logged, then a clear message (toast), never a broken file.
-5. **Templates**
-   - `partials/export_menu.html` (DaisyUI dropdown, tooltips) used in `query_result.html` area and `dashboard_tile.html` Table tiles.
-   - PNG button on chart tiles in `dashboard_tile.html`; `chart_script.html` `downloadPng` listens for its tile id only.
-   - `dashboard_export.html`: standalone page (own `<!doctype>`, CDN DaisyUI/Tailwind + ECharts 5.6.0, `chart_script` inlined, `json_script` for options, autoescaped text).
-   - "⤓ HTML" button in `dashboard.html` toolbar.
-6. **Docs**: this file's status, then the `CLAUDE.md` phase line.
+1. **`my_insights/db_connect.py` (new)**
+   - `DbServer` (in `workspace.py`): kind, host, port, database, user, password, require_ssl. Memory only, `repr` hides the password.
+   - `connect(server)`: checks `ALLOW_DB_CONNECT`, `DB_ALLOWED_HOSTS`, the driver is installed;
+     connects with `DB_TIMEOUT_SECONDS`; friendly messages for wrong password, unknown host,
+     refused port, unknown database, SSL required (logged first, never with the password).
+   - `list_tables(server)`: tables + views with estimated rows and columns
+     (Postgres `pg_class.reltuples`, MySQL `information_schema.tables.table_rows`).
+   - `check_select(sql)`: one statement, starts with SELECT / WITH, else refused.
+   - Fetch rows in batches inside a read-only transaction with a statement time limit
+     (Postgres `SET TRANSACTION READ ONLY` + `statement_timeout`; MySQL `START TRANSACTION READ ONLY` + `max_execution_time`).
+2. **`db_loading.py`**: split the SQLite-only parts so `_load_table` and `_add_foreign_keys` work from any "source" (SQLite file or server): one small `rows(table)` / `foreign_keys(table)` interface. `PendingDb` also holds a live server pick list (no open connection kept: connect per action).
+3. **`workspace.py`**: `DbServer`; `Dataset.db_source` (server + table or query) for Refresh.
+4. **Refresh**: `dataset_refresh` handles `db_source` the same way as `api_source` (re-read, same names, types re-checked).
+5. **Views/URLs**: `db_test`, `db_connect` (shows pick list), reuse `db_import` / `db_cancel` with the Own query fields. Same CSRF / lock / `check_capacity`.
+6. **Templates (HTMX, Alpine, DaisyUI)**: From database tab form (port fills 5432 / 3306 when the type changes), pick list partial reused with "about N rows", Own query box; tooltips on every field.
+7. **`conf.py`**: `ALLOW_DB_CONNECT`, `DB_ALLOWED_HOSTS`, `DB_TIMEOUT_SECONDS` (30).
+8. **`pyproject.toml`**: extras `postgres = ["psycopg[binary]"]`, `mysql = ["PyMySQL"]`; dev group gets both.
+9. **Docs**: `docs/project.md` 8c line, README settings, this plan.
 
-## Reuse
-- `django_datatable.formula_safe`, `rows_csv_response`.
-- `querying.plan_query` (has `cap`), `run_query`, `format_value`, `indian_number`, `QueryResult.columns/totals/truncated`.
-- `dashboard.build_tile`, `read_clicks`, `TileView`; `dashboard_views._grid_context` widths.
-- `query_views._table_rows` / Across column logic for the wide layout.
-- `partials/chart_script.html` (`insightChart`, `addChartFormats`, `downloadPng`).
-- `conf.get`, `tests/conftest.py` helpers (`csv_bytes`, `insights_settings`, `workspace`).
+## Tests (`tests/test_db_connect.py`)
+- Form → server details; password never in logs, repr, recipe or export.
+- Host not in `DB_ALLOWED_HOSTS` refused; switched off refused; driver missing message.
+- `check_select`: SELECT/WITH pass; `DELETE`, `SELECT 1; DROP TABLE x`, empty refused.
+- Fake server: listing with estimates and schema names, import ticked tables + own query, types like CSV, row limit, all or nothing, foreign key first suggestion, Refresh re-reads.
+- Connection errors become friendly messages (wrong password, unknown host, timeout).
+- Live (skipped unless env var set): Postgres and MySQL in Docker — list, import, FK, read-only (a write is refused), Refresh.
+- Run `uv run pytest`; browser check in the preview against the Docker Postgres.
 
-## Tests (`tests/test_exporting.py`, `tests/test_export_views.py`)
-- **Formula safety**: `=1+1`, `+91…`, `-x`, `@sum`, tab-start → escaped in CSV and Excel; `-5`, `+1,000` numbers untouched.
-- **Full rows**: with `PREVIEW_ROW_CAP=10` a 50-row query exports 50; with `EXPORT_ROW_CAP=20` exports 20 and About sheet says "cut".
-- **Excel**: numbers are numeric cells, dates are date cells, number format has ₹ / decimals, header frozen, Total row matches `result.totals`; About sheet lists filters.
-- **Across**: wide columns match the screen.
-- **CSV**: BOM, header labels, same values as Excel.
-- **Tile export**: global + click filters applied (Delhi only); clicked chart's own filter skipped as on screen; removed source → clear message.
-- **Dashboard HTML**: one file, has every tile title, KPI value, note text escaped (`<script>` stays text), chart options as JSON, table capped at 500 with note, filter chips shown.
-- **Views**: download headers / filenames, sessions isolated, bad id → 404 message.
-- Older tests all still pass.
-
-## Verification
-- `uv run pytest`, then `ruff`.
-- Restart demo server (`my-insights-demo`, port 8010), load the CSV.
-- Export a query to CSV and Excel; open the Excel with openpyxl and check types/formats; check a `=` cell.
-- On "Monthly review": click a bar, export a Table tile (filtered), download a chart PNG, export HTML and open it in the browser pane (charts hover).
-- Screenshot the menus at desktop and phone width.
-- Then `/code-review`, fix findings, update this file's status and the CLAUDE.md phase line.
+## End of phase
+Update "Current phase" in `CLAUDE.md`, then run `/code-review` and `/simplify`.

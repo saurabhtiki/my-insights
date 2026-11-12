@@ -1,0 +1,15 @@
+{
+  "status": "ok",
+  "generated": "2026-11-12",
+  "data": {
+    "orders": [
+      { "order_id": 1001, "shop_id": 9, "amount": 500, "items": [ { "sku": "A1", "qty": 2 }, { "sku": "B7", "qty": 1 } ] },
+      { "order_id": 1002, "shop_id": 7, "amount": 300, "items": [ { "sku": "C3", "qty": 5 } ] },
+      { "order_id": 1003, "shop_id": 9, "amount": 950, "items": [ { "sku": "A1", "qty": 10 } ] }
+    ],
+    "shops": [
+      { "shop_id": 9, "city": "Pune", "manager": "Ravi" },
+      { "shop_id": 7, "city": "Mumbai", "manager": "Asha" }
+    ]
+  }
+}

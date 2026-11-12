@@ -18,7 +18,7 @@ My Insights is a reusable Django add-on. Users upload 1 or more tabular data set
 ## User flow
 
 1. **Upload**
-   The user uploads one or more CSV or Excel files. The app detects headers, data types, and date formats, then shows a profile of each dataset (columns, types, null counts, sample values). See "Bad data" below.
+   The user uploads one or more CSV, Excel or JSON (`.json` / `.jsonl`) files, or imports JSON from a web API (GET/POST, headers, body; fetched on click, with a **Refresh** button). Nested JSON objects become dotted columns (`customer.city`), and lists of objects become linked child datasets. SQLite database files (`.db`) go in the same box: the user ticks the tables to import, and foreign keys become link suggestions. Or the user connects to a live PostgreSQL or MySQL server ("From database": host, database, user, password), ticks tables or writes one SELECT, and imports them read-only; a **Refresh** button reads them again. The password stays in the session's memory only. The app detects headers, data types, and date formats, then shows a profile of each dataset (columns, types, null counts, sample values). See "Bad data" below.
 
 2. **Relate datasets**
    The app suggests joins between datasets based on column names, types, and value overlap. The user accepts, edits, or adds joins and chooses the join type.
@@ -48,6 +48,7 @@ My Insights is a reusable Django add-on. Users upload 1 or more tabular data set
 - The API key is kept in the session only.
 - Each session's data is isolated from other users.
 - Excel macros are ignored.
+- API import: internal and localhost addresses are blocked (unless the host allows them), and there are timeout and size limits. API keys and headers stay in the in-memory session only.
 - Exports escape formula-like cells (see Export).
 
 ## Bad data

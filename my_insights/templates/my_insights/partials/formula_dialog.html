@@ -92,28 +92,32 @@
         <template x-for="(row, index) in rows" :key="index">
           <div class="flex flex-wrap items-center gap-2">
             <span class="w-14 font-medium" x-text="index ? 'Else if' : 'When'"></span>
-            <select x-model="row.field" class="select select-sm w-44" aria-label="Field">
+            <select x-model="row.field" @change="fitTest(row)" class="select select-sm w-44" aria-label="Field">
               <option value="">Field</option>
               {% for f in fields %}{% if not f.info.error and not f.values_only %}<option>{{ f.info.name }}</option>{% endif %}{% endfor %}
             </select>
-            <select x-model="row.op" class="select select-sm w-20" aria-label="Test">
-              {% for sign in compare_signs %}<option>{{ sign }}</option>{% endfor %}
+            <select x-model="row.op" class="select select-sm w-40" aria-label="Test"
+                    title="The tests change with the field: text has contains / starts with, dates have before / after">
+              <template x-for="test in testsFor(row.field)" :key="test[0]">
+                <option :value="test[0]" x-text="test[1]" :selected="test[0] === row.op"></option>
+              </template>
             </select>
-            <input x-model="row.value" placeholder="value, e.g. 10" class="input input-sm w-32" aria-label="Value">
+            <input x-model="row.value" x-show="needsValue(row)" :placeholder="placeholderFor(row)" class="input input-sm w-32" aria-label="Value">
             <span>then</span>
             <input x-model="row.result" placeholder="result, e.g. Bulk" class="input input-sm w-32" aria-label="Result">
             <button type="button" class="btn btn-ghost btn-xs btn-square" x-show="rows.length > 1" @click="rows.splice(index, 1)" title="Remove this line" aria-label="Remove">✕</button>
           </div>
         </template>
         <div class="flex flex-wrap items-center gap-2">
-          <button type="button" class="btn btn-ghost btn-xs" @click="rows.push({ field: '', op: '>', value: '', result: '' })" title="Test one more thing when the ones above are not true">+ Else if</button>
+          <button type="button" class="btn btn-ghost btn-xs" @click="rows.push({ field: '', op: '=', value: '', result: '' })" title="Test one more thing when the ones above are not true">+ Else if</button>
         </div>
         <div class="flex flex-wrap items-center gap-2">
           <span class="w-14 font-medium">Else</span>
           <input x-model="otherwise" placeholder="e.g. Small (empty = blank)" class="input input-sm w-48" aria-label="Else">
           <button type="button" class="btn btn-primary btn-sm" @click="insert(build())" title="Put this into the formula box">Insert</button>
         </div>
-        <p class="text-xs text-base-content/60">Numbers stay numbers; other values become text. Type [Field] to use a field as the value or result.</p>
+        <p class="text-xs text-base-content/60">Text tests ignore capitals (“pune” finds “Pune”). Write dates as 31-03-2026. Type [Field] to use a field as the value or result.</p>
+        {{ field_kinds|json_script:"formula-field-kinds" }}
       </div>
     </details>
 

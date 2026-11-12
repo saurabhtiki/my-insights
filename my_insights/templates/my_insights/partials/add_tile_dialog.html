@@ -54,8 +54,13 @@
 
     <fieldset class="fieldset" x-show="kind === 'note'" x-cloak>
       <legend class="fieldset-legend">Note</legend>
-      <textarea name="text" rows="4" maxlength="2000" class="textarea w-full" placeholder="e.g. Figures are before GST. Details: https://…"
-                aria-label="Note text" title="Plain text. New lines are kept and links (https://…) become clickable."></textarea>
+      {# the same editor as ✎ on a Note tile; its fields are t0_text / t0_values (0 = the new tile) #}
+      {% include "my_insights/partials/note_editor.html" with tile=new_note t=new_note %}
+    </fieldset>
+
+    <fieldset class="fieldset" x-show="kind === 'kpi' || kind === 'note'" x-cloak>
+      <legend class="fieldset-legend">Card colour</legend>
+      {% include "my_insights/partials/color_picker.html" with prefix="t0_" color="" tone="soft" save=False %}
     </fieldset>
 
     <div class="modal-action">

@@ -51,6 +51,10 @@ FUNCTIONS = {  # every word a formula may use, with a short help line for the ch
     "MONTH": "MONTH(date) — 1 to 12",
     "DAYS_BETWEEN": "DAYS_BETWEEN(start date, end date)",
     "TODAY": "TODAY() — today's date",
+    "CONTAINS": 'CONTAINS(text, part) — e.g. CONTAINS([City], "pur"); capitals don\'t matter',
+    "STARTS_WITH": 'STARTS_WITH(text, start) — e.g. STARTS_WITH([Code], "IN")',
+    "ENDS_WITH": 'ENDS_WITH(text, end) — e.g. ENDS_WITH([Email], ".com")',
+    "ISBLANK": "ISBLANK(value) — yes when the value is empty",
     "SUM": "SUM(number) — total of each group",
     "AVG": "AVG(number) — average of each group",
     "MEDIAN": "MEDIAN(number) — middle value of each group",
@@ -60,6 +64,7 @@ FUNCTIONS = {  # every word a formula may use, with a short help line for the ch
     "COUNT_UNIQUE": "COUNT_UNIQUE(value) — different values, per group",
 }
 WORDS = {"AND", "OR", "NOT", "TRUE", "FALSE"}
+TEXT_TESTS = {"CONTAINS": "contains", "STARTS_WITH": "starts_with", "ENDS_WITH": "ends_with"}
 
 TOKEN = re.compile(
     r"""
@@ -394,6 +399,22 @@ class _Parser:
                 end,
                 whole=True,
             )
+        if word in TEXT_TESTS:  # like "=": capitals don't matter; a blank counts as ""
+            _count(word, args, 2, 2)
+            _need(args[0], "text", f"as the first part of {word}")
+            _need(args[1], "text", f"as the second part of {word}")
+            text, part = (f"lower(coalesce({arg.sql}, ''))" for arg in args)
+            sql = f"{TEXT_TESTS[word]}({text}, {part})"
+            return _join(sql, "yes/no", *args)
+        if word == "ISBLANK":
+            _count(word, args, 1, 1)
+            value = args[0].sql
+            sql = (
+                f"({value} IS NULL OR trim({value}) = '')"
+                if args[0].kind == "text"
+                else f"({value} IS NULL)"
+            )
+            return _join(sql, "yes/no", *args)
         raise FormulaError(f"Unknown word “{word}”.")  # pragma: no cover - FUNCTIONS covers all
 
     def aggregate(self, word: str) -> Compiled:

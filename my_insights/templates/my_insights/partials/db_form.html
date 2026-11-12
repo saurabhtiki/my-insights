@@ -1,0 +1,62 @@
+{# "From database": connect to a live PostgreSQL / MySQL server; its tables then show as a pick list. #}
+<form id="db-form" x-show="source === 'db'" x-cloak class="card card-border bg-base-100"
+      method="post" action="{% url 'my_insights:db_connect' %}"
+      hx-post="{% url 'my_insights:db_connect' %}" hx-target="#workspace-panel" hx-swap="outerHTML"
+      hx-disabled-elt="find button"
+      x-data="{ kind: 'postgres', ports: { postgres: '5432', mysql: '3306' } }">
+  {% csrf_token %}
+  <div class="card-body gap-4">
+    <div class="grid gap-3 md:grid-cols-[10rem_1fr_7rem]">
+      <label class="form-control">
+        <span class="label text-sm">Type</span>
+        <select name="kind" x-model="kind" class="select select-sm w-full" title="Which kind of database server it is">
+          <option value="postgres">PostgreSQL</option>
+          <option value="mysql">MySQL / MariaDB</option>
+        </select>
+      </label>
+      <label class="form-control">
+        <span class="label text-sm">Host</span>
+        <input name="host" required maxlength="255" autocomplete="off" spellcheck="false" class="input input-sm w-full font-mono"
+               placeholder="192.168.1.20 or erp.local"
+               title="The server's name or IP address, e.g. 192.168.1.20, erp.local or mydb.abc123.ap-south-1.rds.amazonaws.com">
+      </label>
+      <label class="form-control">
+        <span class="label text-sm">Port</span>
+        <input name="port" inputmode="numeric" maxlength="5" class="input input-sm w-full font-mono" :placeholder="ports[kind]"
+               title="Leave empty for the usual port: 5432 for PostgreSQL, 3306 for MySQL">
+      </label>
+    </div>
+
+    <div class="grid gap-3 md:grid-cols-3">
+      <label class="form-control">
+        <span class="label text-sm">Database</span>
+        <input name="database" required maxlength="255" autocomplete="off" spellcheck="false" class="input input-sm w-full font-mono"
+               placeholder="e.g. erp" title="The database's name on that server, e.g. erp. Its tables become the pick list.">
+      </label>
+      <label class="form-control">
+        <span class="label text-sm">User</span>
+        <input name="user" required maxlength="255" autocomplete="off" spellcheck="false" class="input input-sm w-full font-mono"
+               placeholder="e.g. report"
+               title="The database user. Safest: a user that may only read (ask your database admin for one).">
+      </label>
+      <label class="form-control">
+        <span class="label text-sm">Password</span>
+        <input name="password" type="password" maxlength="1000" autocomplete="new-password" class="input input-sm w-full"
+               title="Kept in this session's memory only (for Refresh). Never saved, exported or written to any log. Forgotten when you log out or after you stop using the app.">
+      </label>
+    </div>
+
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <label class="label cursor-pointer gap-2 text-sm"
+             title="Tick for cloud databases (AWS RDS, Azure, Supabase…) that only accept encrypted connections. Unticked: encrypted when the server offers it.">
+        <input type="checkbox" name="require_ssl" value="1" class="checkbox checkbox-sm">
+        Require SSL
+      </label>
+      <p class="text-xs text-base-content/60">Read-only: nothing on the server is changed. You pick the tables (or write a SELECT) next.</p>
+      <button type="submit" class="btn btn-sm btn-primary"
+              title="Connect and list the tables and views this user may read. Nothing is loaded yet.">
+        <span class="loading loading-spinner loading-xs htmx-indicator"></span>Connect
+      </button>
+    </div>
+  </div>
+</form>

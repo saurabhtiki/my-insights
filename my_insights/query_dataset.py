@@ -58,6 +58,44 @@ def refresh_from_query(workspace, query_id: int) -> list[str]:
     return problems
 
 
+def swap_in_fresh(
+    workspace, pairs: list[tuple[Dataset, Dataset]], fresh: list[Dataset]
+) -> list[str]:
+    """Refresh: each (old, new) pair → the old dataset gets the new one's data, keeping its id
+    and name so queries, charts and dashboards keep working. `fresh` = every newly loaded
+    dataset (removed again on failure). Call while holding `workspace.lock`. Returns notes."""
+    connection = workspace.connection
+    connection.execute("BEGIN TRANSACTION")
+    try:
+        for old, new in pairs:
+            connection.execute(f"DROP TABLE IF EXISTS {old.table_name}")
+            connection.execute(f"ALTER TABLE {new.table_name} RENAME TO {old.table_name}")
+        connection.execute("COMMIT")
+    except BaseException:
+        connection.execute("ROLLBACK")
+        for new in fresh:
+            workspace.datasets.pop(new.dataset_id, None)
+            connection.execute(f"DROP TABLE IF EXISTS {new.table_name}")
+        raise
+    notes = []
+    for old, new in pairs:
+        gone = sorted({c.name for c in old.columns} - {c.name for c in new.columns})
+        if gone:
+            notes.append(
+                f"“{old.name}” no longer has: {', '.join(gone)}. "
+                "Queries and charts that use them will show a problem."
+            )
+        old.columns, old.row_count, old.source_file = new.columns, new.row_count, new.source_file
+        old.notice = ""
+        del workspace.datasets[new.dataset_id]
+    workspace.query_result_cache = None
+    workspace.suggestion_cache = ((), [])
+    for old, _ in pairs:
+        notes += refresh_built_on(workspace, old.dataset_id)
+    workspace.refresh_memory()
+    return notes
+
+
 def refresh_built_on(workspace, dataset_id: int) -> list[str]:
     """After a dataset changed (e.g. a link was edited): copy again the query-datasets built
     on it."""

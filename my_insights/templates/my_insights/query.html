@@ -119,13 +119,53 @@
       },
     };
   }
+  // IF builder tests per field kind: [key, label]. A sign key (=, >…) is written as it is.
+  var BLANK_TESTS = [["blank", "is blank"], ["filled", "is not blank"]];
+  var CONDITION_TESTS = {
+    number: [["=", "= equal to"], ["<>", "≠ not equal to"], [">", "> more than"], ["<", "< less than"],
+             [">=", "≥ at least"], ["<=", "≤ at most"], ...BLANK_TESTS],
+    text: [["=", "is"], ["<>", "is not"], ["contains", "contains"], ["not_contains", "does not contain"],
+           ["starts", "starts with"], ["ends", "ends with"], ...BLANK_TESTS],
+    date: [["=", "is on"], ["<>", "is not on"], ["<", "is before"], [">", "is after"],
+           ["<=", "on or before"], [">=", "on or after"], ...BLANK_TESTS],
+    "yes/no": [["yes", "is yes"], ["no", "is no"], ...BLANK_TESTS],
+  };
+  var TEXT_FUNCTIONS = { contains: "CONTAINS", not_contains: "NOT CONTAINS", starts: "STARTS_WITH", ends: "ENDS_WITH" };
   function conditionBuilder() {
     return {
-      rows: [{ field: "", op: ">", value: "", result: "" }],
+      rows: [{ field: "", op: "=", value: "", result: "" }],
       otherwise: "",
+      kinds: {},
+      init() {
+        const data = document.getElementById("formula-field-kinds");
+        this.kinds = data ? JSON.parse(data.textContent) : {};
+      },
+      kindOf(field) { return this.kinds[field] || "number"; },
+      testsFor(field) { return CONDITION_TESTS[this.kindOf(field)]; },
+      fitTest(row) {  // a new field keeps its test only when that field offers it
+        const tests = this.testsFor(row.field);
+        if (!tests.some((test) => test[0] === row.op)) row.op = tests[0][0];
+      },
+      needsValue(row) { return !["blank", "filled", "yes", "no"].includes(row.op); },
+      placeholderFor(row) {
+        return { text: "e.g. Pune", date: "e.g. 31-03-2026" }[this.kindOf(row.field)] || "e.g. 10";
+      },
+      condition(row) {
+        const ref = fieldRef(row.field);
+        const typed = String(row.value ?? "").trim();
+        // a text field compares with text even when the value looks like a number, e.g. a PIN code
+        const value = this.kindOf(row.field) === "text" && !/^\[.*\]$/.test(typed)
+          ? '"' + typed.replace(/"/g, '""') + '"' : formulaLiteral(typed);
+        if (row.op === "blank") return "ISBLANK(" + ref + ")";
+        if (row.op === "filled") return "NOT ISBLANK(" + ref + ")";
+        if (row.op === "yes") return ref;
+        if (row.op === "no") return "NOT " + ref;
+        if (TEXT_FUNCTIONS[row.op]) return TEXT_FUNCTIONS[row.op] + "(" + ref + ", " + value + ")";
+        return ref + " " + row.op + " " + value;
+      },
       build() {
         const parts = this.rows.filter((row) => row.field).map((row) =>
-          [fieldRef(row.field) + " " + row.op + " " + formulaLiteral(row.value), formulaLiteral(row.result)]);
+          [this.condition(row), formulaLiteral(row.result)]);
         if (!parts.length) return "";
         const tail = this.otherwise.trim() === "" ? "" : ", " + formulaLiteral(this.otherwise);
         if (parts.length === 1) return "IF(" + parts[0].join(", ") + tail + ")";

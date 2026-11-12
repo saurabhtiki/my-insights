@@ -1,6 +1,7 @@
 """Pages: upload + dataset list (home) and one dataset's profile."""
 
 import logging
+from pathlib import Path
 
 from django.http import Http404, HttpResponse
 from django.shortcuts import redirect, render
@@ -19,6 +20,7 @@ from django_datatable import (
 )
 
 from . import charting, conf
+from .db_loading import DB_TYPES, open_database
 from .linking import describe_sources
 from .loading import UploadRejected, load_file
 from .uploads import MemoryOnlyUploadHandler
@@ -118,6 +120,10 @@ def page_context(request, workspace, expired: bool, **extra) -> dict:
         "my_memory_limit_mb": conf.get("SESSION_MEMORY_MB"),
         "max_file_mb": conf.get("MAX_FILE_MB"),
         "max_files": conf.get("MAX_FILES_PER_UPLOAD"),
+        "allow_api": conf.get("ALLOW_API_IMPORT"),
+        "allow_db": conf.get("ALLOW_DB_IMPORT"),
+        "allow_db_connect": conf.get("ALLOW_DB_CONNECT"),
+        "pending_databases": list(workspace.pending_databases.values()) if workspace else [],
         "idle_warn_seconds": conf.get("IDLE_WARN_MINUTES") * 60,
         "idle_clear_seconds": conf.get("IDLE_CLEAR_MINUTES") * 60,
         "idle_clear_minutes": conf.get("IDLE_CLEAR_MINUTES"),
@@ -207,9 +213,14 @@ def _receive_upload(request, handler):
             }
         )
     if not files and not results:
-        results.append({"ok": False, "message": "Choose at least one CSV or Excel file."})
+        results.append(
+            {"ok": False, "message": "Choose at least one CSV, Excel, JSON or SQLite file."}
+        )
 
     for uploaded in files:
+        if Path(uploaded.name).suffix.lower() in DB_TYPES:
+            results.append(_open_database(workspace, uploaded))
+            continue
         try:
             # The upload's own in-memory buffer: no copy of the file is made.
             datasets = load_file(workspace, uploaded.name, uploaded.file)
@@ -229,6 +240,26 @@ def _receive_upload(request, handler):
             }
         )
     return panel_response(request, workspace, results, expired)
+
+
+def _open_database(workspace, uploaded) -> dict:
+    """A SQLite file isn't loaded at once: its tables are listed for the user to pick."""
+    try:
+        with uploaded.file.getbuffer() as data:  # the upload's own buffer, no copy
+            pending = open_database(workspace, uploaded.name, data)
+    except UploadRejected as error:
+        logger.info("Database upload rejected: %s: %s", uploaded.name, error)
+        return {"ok": False, "file": uploaded.name, "message": str(error)}
+    finally:
+        uploaded.close()
+    count = len(pending.tables)
+    return {
+        "ok": True,
+        "title": "Opened",
+        "file": uploaded.name,
+        "message": f"Found {count} table{'' if count == 1 else 's'}. "
+        "Tick the ones you want below, then click Import.",
+    }
 
 
 @require_POST

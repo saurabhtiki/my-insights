@@ -1,0 +1,40 @@
+{
+  "status": "ok",
+  "data": {
+    "orders": [
+      {
+        "order_id": 1001,
+        "order_date": "2026-11-01",
+        "paid": true,
+        "customer": { "name": "Ravi", "address": { "city": "Pune", "pin": "411001" } },
+        "tags": ["new", "vip"],
+        "items": [
+          { "sku": "A1", "product": "Pen", "qty": 2, "price": 10.5 },
+          { "sku": "B7", "product": "Notebook", "qty": 1, "price": 45 }
+        ]
+      },
+      {
+        "order_id": 1002,
+        "order_date": "2026-11-03",
+        "paid": false,
+        "customer": { "name": "Asha", "address": { "city": "Mumbai", "pin": "400001" } },
+        "tags": ["repeat"],
+        "items": [
+          { "sku": "C3", "product": "Marker", "qty": 5, "price": 20 }
+        ]
+      },
+      {
+        "order_id": 1003,
+        "order_date": "2026-11-05",
+        "paid": true,
+        "customer": { "name": "John", "address": { "city": "Delhi", "pin": "110001" } },
+        "tags": [],
+        "items": [
+          { "sku": "A1", "product": "Pen", "qty": 10, "price": 10.5 },
+          { "sku": "D2", "product": "Stapler", "qty": 1, "price": 120 },
+          { "sku": "B7", "product": "Notebook", "qty": 3, "price": 45 }
+        ]
+      }
+    ]
+  }
+}

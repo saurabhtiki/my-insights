@@ -5,7 +5,9 @@ only (DuckDB) and is never saved to disk or the database.
 
 ## Add it to a host app
 
-1. Install: `uv add "my-insights @ git+<repo-url>"`
+1. Install: `uv add "my-insights @ git+<repo-url>"`. For "From database", add the driver you
+   need: `"my-insights[postgres] @ git+<repo-url>"` and/or `[mysql]` (or both: `[postgres,mysql]`).
+   Without one, users see a message naming what to install.
 2. `INSTALLED_APPS += ["django.contrib.humanize", "django_datatable", "my_insights"]`
 3. `urlpatterns += [path("insights/", include("my_insights.urls"))]`
 4. Settings (all optional; defaults in `my_insights/conf.py`):
@@ -17,9 +19,11 @@ only (DuckDB) and is never saved to disk or the database.
        "MAX_ROWS": 500_000,
        "SESSION_MEMORY_MB": 150,
        "TOTAL_MEMORY_MB": 350,  # e.g. a 1 GB server
+       "DB_ALLOWED_HOSTS": ["erp.local"],  # only these Postgres / MySQL servers ([] = any)
    }
    ```
-5. Tailwind: add `@source ".../my_insights/templates";` to the host's Tailwind input file.
+5. Tailwind: add `@source ".../my_insights";` (the whole package folder: templates and the
+   `.py` files, where the tile colour classes live) to the host's Tailwind input file.
 6. Run the server as **one process** (threads are fine), e.g. waitress. Users' data lives in
    that process's memory.
 

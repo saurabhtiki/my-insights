@@ -3,13 +3,15 @@
   {% if results %}
   <div class="space-y-2">
     {% for result in results %}
-    <div role="alert" class="alert alert-soft {% if result.ok %}alert-success{% else %}alert-error{% endif %} items-start">
+    <div role="alert" class="alert alert-soft {% if result.ok %}alert-success{% elif result.warn %}alert-warning{% else %}alert-error{% endif %} items-start">
       <span class="font-semibold">{% if result.title %}{{ result.title }}{% elif result.ok %}Loaded{% else %}Not loaded{% endif %}</span>
       <div>{% if result.file %}<b>{{ result.file }}</b> · {% endif %}{{ result.message }}</div>
     </div>
     {% endfor %}
   </div>
   {% endif %}
+
+  {% for pending in pending_databases %}{% include "my_insights/partials/db_pick.html" %}{% endfor %}
 
   {% if datasets %}
   <section class="card card-border bg-base-100" aria-labelledby="dashboards-heading">
@@ -66,6 +68,12 @@
           </div>
           {% if dataset.link %}
           <span class="badge badge-primary badge-soft badge-sm shrink-0" title="A combined dataset: a main dataset with details added from lookup lists">Combined</span>
+          {% elif dataset.db_source %}
+          <span class="badge badge-accent badge-soft badge-sm shrink-0" title="Read from the database {{ dataset.db_source.server.label }}. Use Refresh to read it again; queries and charts on it keep working.">Database</span>
+          {% elif dataset.api_source %}
+          <span class="badge badge-accent badge-soft badge-sm shrink-0" title="Fetched from an API. Use Refresh to fetch it again; queries and charts on it keep working.">API</span>
+          {% elif dataset.parent_id %}
+          <span class="badge badge-ghost badge-sm shrink-0" title="A list inside each row of “{{ dataset.source_file }}”. Link it back with _parent_row → _row. Removing the main dataset removes this too.">Linked list</span>
           {% elif dataset.query_id %}
           <span class="badge badge-secondary badge-soft badge-sm shrink-0" title="Made from a saved query's answer, e.g. Top customers. Removing that query removes it too.">Query result</span>
           {% endif %}
@@ -75,6 +83,7 @@
           </span>
           {% endif %}
         </div>
+        {% if dataset.notice %}<p class="text-xs text-warning" role="status">⚠ {{ dataset.notice }}</p>{% endif %}
         <div class="flex gap-6 text-sm">
           <div><div class="text-lg font-semibold tabular-nums">{{ dataset.row_count|intcomma }}</div><div class="text-base-content/60">rows</div></div>
           <div><div class="text-lg font-semibold tabular-nums">{{ dataset.columns|length }}</div><div class="text-base-content/60">columns</div></div>
@@ -108,6 +117,19 @@
             <a href="{% url 'my_insights:dataset' dataset.dataset_id %}" class="btn btn-sm" title="See each column's type, blanks and examples">Open profile</a>
             <a href="{% url 'my_insights:query' %}?dataset={{ dataset.dataset_id }}" class="btn btn-sm btn-primary btn-soft" title="Ask a question of this data, e.g. Sum of Amount by Month">New query</a>
             <a href="{% url 'my_insights:query' %}?dataset={{ dataset.dataset_id }}&tab=chart" class="btn btn-sm btn-primary btn-soft" title="Draw a chart of this data, e.g. Sum of Amount by Month as columns">New chart</a>
+            {% if dataset.db_source %}
+            <button type="button" class="btn btn-sm btn-accent btn-soft"
+                    hx-post="{% url 'my_insights:dataset_refresh' dataset.dataset_id %}" hx-target="#workspace-panel" hx-swap="outerHTML" hx-disabled-elt="this"
+                    title="Read this from the database again (read-only). Queries, charts and dashboards on it keep working.">
+              <span class="loading loading-spinner loading-xs htmx-indicator"></span>↻ Refresh
+            </button>
+            {% elif dataset.api_source %}
+            <button type="button" class="btn btn-sm btn-accent btn-soft"
+                    hx-post="{% url 'my_insights:dataset_refresh' dataset.dataset_id %}" hx-target="#workspace-panel" hx-swap="outerHTML" hx-disabled-elt="this"
+                    title="Fetch this API again. Every dataset from the same API (and its linked lists) is updated, and queries, charts and dashboards on them keep working.">
+              <span class="loading loading-spinner loading-xs htmx-indicator"></span>↻ Refresh
+            </button>
+            {% endif %}
           </div>
           <button type="button" class="btn btn-sm btn-ghost text-error"
                   hx-post="{% url 'my_insights:dataset_remove' dataset.dataset_id %}" hx-target="#workspace-panel" hx-swap="outerHTML"
