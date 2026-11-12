@@ -1,0 +1,20 @@
+{% extends base_template %}
+{% block title %}Load recipe{% endblock %}
+{% block content %}
+{% include "my_insights/partials/idle_script.html" %}
+<div class="space-y-6" hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
+  <div class="breadcrumbs text-sm">
+    <ul>
+      <li><a href="{% url 'my_insights:home' %}" title="Back to all your uploaded data">Your data</a></li>
+      <li>Load recipe</li>
+    </ul>
+  </div>
+
+  {% with heading="Load recipe" subheading="Pick which of your datasets each recipe dataset uses. Every column the recipe needs must be there, so no report is ever wrong." %}
+    {% include "my_insights/partials/top_bar.html" %}
+  {% endwith %}
+
+  {% include "my_insights/partials/recipe_match_form.html" %}
+  {% include "my_insights/partials/idle_watch.html" %}
+</div>
+{% endblock %}

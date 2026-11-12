@@ -366,6 +366,10 @@ class Workspace:
         self.dashboards: dict[int, Dashboard] = {}
         self._next_dashboard_id = 1
         self.notice = ""  # a problem to show on the next page (after a redirect)
+        self.done_notice: list[str] = []  # good news for the next page, e.g. a recipe applied
+        # A recipe read but not applied yet (recipe.read_recipe's result), waiting for the
+        # user to match its datasets.
+        self.pending_recipe: dict | None = None
         self.pending_databases: dict[str, PendingDb] = {}
         self._next_pending = 1
 

@@ -1,0 +1,39 @@
+{# Save the setup as a recipe, or load one. On the home page, inside the workspace panel. #}
+<section class="card card-border bg-base-100" aria-labelledby="recipe-heading">
+  <div class="card-body gap-3 p-4">
+    <div class="flex flex-wrap items-center justify-between gap-2">
+      <h2 id="recipe-heading" class="card-title text-base"
+          title="A recipe keeps your links, calculated fields, queries, charts and dashboards, but no data. Use it next month on new files.">🧾 Recipe</h2>
+      <div class="flex flex-wrap items-center gap-2">
+        {% if can_save_recipe %}
+        <form method="post" action="{% url 'my_insights:recipe_save' %}" class="join"
+              {% if recipe_to_host %}hx-post="{% url 'my_insights:recipe_save' %}" hx-target="#workspace-panel" hx-swap="outerHTML" hx-disabled-elt="find button"{% endif %}>
+          {% csrf_token %}
+          <input name="name" maxlength="100" placeholder="Recipe name" aria-label="Recipe name" class="input input-sm join-item w-44"
+                 title="e.g. Monthly stock review. Empty = “My recipe”">
+          <button class="btn btn-sm btn-primary btn-soft join-item"
+                  title="{% if recipe_to_host %}Save your setup (no data) in the app, to use again on new files{% else %}Download your setup (no data) as a .json file, to use again on new files{% endif %}">
+            {% if recipe_to_host %}Save recipe{% else %}⭳ Save recipe{% endif %}
+          </button>
+        </form>
+        {% endif %}
+        <form method="post" action="{% url 'my_insights:recipe_upload' %}" enctype="multipart/form-data" class="flex items-center gap-2"
+              x-data="{ picked: false }">
+          {% csrf_token %}
+          <input type="file" name="recipe" accept=".json,application/json" aria-label="Recipe file" class="file-input file-input-sm w-56"
+                 @change="picked = $event.target.files.length > 0" title="A recipe .json saved from My Insights">
+          <button class="btn btn-sm" :disabled="!picked"
+                  title="Read the recipe, then match its datasets to the data you uploaded">Load recipe</button>
+        </form>
+      </div>
+    </div>
+    {% if pending_recipe %}
+    <div role="status" class="alert alert-soft alert-info py-2">
+      <span>Recipe “{{ pending_recipe.name }}” is waiting. Upload its files, then match them.</span>
+      <a href="{% url 'my_insights:recipe_match' %}" class="btn btn-sm btn-info" title="Pick which uploaded dataset each recipe dataset uses, then apply it">Match &amp; apply</a>
+    </div>
+    {% elif not can_save_recipe %}
+    <p class="text-sm text-base-content/60">Build a query, chart or dashboard, then save it as a recipe. Or load a recipe you saved earlier.</p>
+    {% endif %}
+  </div>
+</section>

@@ -20,8 +20,23 @@ only (DuckDB) and is never saved to disk or the database.
        "SESSION_MEMORY_MB": 150,
        "TOTAL_MEMORY_MB": 350,  # e.g. a 1 GB server
        "DB_ALLOWED_HOSTS": ["erp.local"],  # only these Postgres / MySQL servers ([] = any)
+       # Recipes (optional): store them in the host instead of a .json download.
+       "RECIPE_SAVE": "stock_audit.recipes.save",
+       "RECIPE_LOAD": "stock_audit.recipes.load",
    }
    ```
+   Recipe hooks, e.g. in `stock_audit/recipes.py`:
+   ```python
+   def save(request, recipe: dict, name: str) -> str:
+       saved = Recipe.objects.create(owner=request.user, name=name, body=recipe)
+       return f"Saved “{name}”."            # shown to the user
+
+   def load(request, recipe_id: str) -> dict | None:
+       row = Recipe.objects.filter(owner=request.user, pk=recipe_id).first()
+       return row.body if row else None     # None → "That recipe was not found."
+   ```
+   Your own page lists the user's recipes and links each to
+   `{% url 'my_insights:recipe_load' %}?id=<pk>`.
 5. Tailwind: add `@source ".../my_insights";` (the whole package folder: templates and the
    `.py` files, where the tile colour classes live) to the host's Tailwind input file.
 6. Run the server as **one process** (threads are fine), e.g. waitress. Users' data lives in

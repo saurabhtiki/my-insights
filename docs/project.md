@@ -39,10 +39,13 @@ My Insights is a reusable Django add-on. Users upload 1 or more tabular data set
    The user adds their own AI provider endpoint and API key, selects a model, and describes the request in plain language. The AI drafts a query. It only sees dataset structure (column names and types), not the data. The user reviews every query before it runs. The key lives in the session only, never in the database.
 
 ## Recipes and host hooks
-- A **recipe** is a small JSON description of joins, queries, charts, and dashboards. It never contains data.
-- The add-on exports and imports recipes. The host app saves them in its own database through two hooks: `on_save(recipe)` and `load_recipe(recipe)`.
-- Example: Stock Audit adds a "Save dashboard" button, calls the add-on, and stores the returned JSON in its own table.
-- To reuse a recipe, the user re-uploads the file. Columns are matched by name. If a column is missing, the app shows a clear message naming it, and the affected tile is flagged.
+- A **recipe** is a small JSON description of the whole setup: links, calculated fields, queries, charts, and dashboards. It never contains data, sample values, API addresses or database details.
+- **Save recipe** downloads a `.json` file. A host app can store recipes itself instead, through two settings: `RECIPE_SAVE` → `save(request, recipe, name)` and `RECIPE_LOAD` → `load(request, recipe_id)`. The host shows its own list and links to `/insights/recipe/load/?id=7`.
+- Example: Stock Audit's "Save recipe" stores the JSON in its own table; next month the user clicks it in Stock Audit's list.
+- To reuse a recipe, the user uploads the new files and loads the recipe. A match screen guesses which dataset is which (same name, then similar name with the right columns) and lets the user change it.
+- Every column the recipe uses must be there. If one is missing, the screen names it (e.g. "“sales” is missing: Cost.") and Apply stays off, so no wrong report is ever shown.
+- Applying replaces the current queries, charts, dashboards and combined datasets; uploaded data stays. It is all or nothing.
+- Later (Phase 9b): recipes may also remember API / database sources, with secrets encrypted and only when the host turns it on.
 
 ## Security
 - The API key is kept in the session only.

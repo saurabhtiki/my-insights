@@ -1,84 +1,116 @@
-# Plan: Phase 8c, Import from a live Postgres / MySQL database (my-insights)
+# Plan: Phase 9a, Recipes: save and reuse your setup (my-insights)
 
-**Status: done.** 412 tests pass (60 new in `tests/test_db_connect.py`; 6 live tests in
-`tests/test_db_live.py` passed against Postgres 17 and MySQL 8.4 in Docker). (Phase 8b plan: `plan_phase8b.md`.)
+**Status: done.** 442 tests pass (30 new in `tests/test_recipe.py`). (Phase 8c plan: `plan_phase8c.md`.)
 
 Built as agreed, with these changes:
-- **No separate Test button**: Connect lists the tables, which is the test.
-- **Server tables start unticked** (a server may have hundreds); SQLite files stay all ticked.
-- **Settings**: `DB_CONNECT_SECONDS` (15) and `DB_QUERY_SECONDS` (300) instead of one
-  `DB_TIMEOUT_SECONDS`, so a big import isn't cut off by the connect wait.
-- **Safety (code review)**: the host must be a plain name or IP (no socket path or host list),
-  a password is required, and Postgres never reads this server's own `~/.pgpass`. Without
-  these, a user could reach the host app's own database with no password.
-- **MySQL**: `BOOLEAN` is really 0/1, so it loads as a number. Without "Require SSL" it still
-  encrypts when the server offers it.
-- **Refresh** shares `query_dataset.swap_in_fresh` with the API Refresh.
+- **"Needs" are worked out when saving**: each file dataset in the recipe lists the columns
+  the setup reads from it (through formulas, links, combined datasets, queries and dashboard
+  filters). The match screen checks those; a dataset nothing uses can be skipped.
+- **Double check at Apply**: after building, every query is planned again; any problem
+  undoes everything (old work kept), so a wrong report can't slip through.
+- **Guessing**: same name, then the name without "(2)" / extension, then a similar name or
+  similar columns with every needed column (e.g. "sales" → "sales_dec").
+- **No demo hook**: the demo uses the .json download; the hooks are covered by tests with
+  fake host functions.
+- CSS rebuilt (`tools/build_css.ps1`) for the new `file-input` / `select` classes.
 
-Known gaps: Import and Refresh hold the user's workspace lock while reading the server (like
-file uploads), so that user's other tabs wait. Date-times are read to the second.
+- **Code review fixes**: a recipe can come from anyone, so chart / tile settings are checked
+  like the screens check them (field keys must look like `g1`, colours like `#1f77b4`, unknown
+  chart types / widths / tones reset). Without this a crafted colour could run script in the
+  page. Deep nesting, odd picks and odd host values give messages, not errors.
+- **Renamed lookup columns**: "Name (items)" becomes "Name (items_dec)" when items is matched to
+  items_dec; queries, formulas, links and dashboard filters follow the new name.
+- **Types**: a needed column read as another type (e.g. Qty now text) blocks Apply:
+  "In “sales”: “Qty” is now text (was a whole number)."
+- **Two tabs**: the match form carries the recipe's token; picks for an older recipe are refused.
+
+Known gaps: loaded datasets the recipe doesn't use keep their own calculated fields. Charts
+already broken when saved stay flagged.
 
 ## Context
-Phase 8b lets users upload a SQLite file. Most company data sits on a live Postgres or MySQL
-server. Phase 8c lets a user connect to one, tick tables (or write a SELECT), import them, and
-Refresh later. Data still lives in memory only; the password too.
+Today everything a user builds (links, calculated fields, queries, charts, dashboards) is lost on
+logout. `project.md` promises **recipes**: a small JSON with the setup but **no data**, stored by
+the host app (Stock Audit) through hooks. Recipes are split in two (agreed):
+- **9a (this plan)**: save / load a recipe, match it to the data, works for uploaded files.
+- **9b (later)**: remember API / database sources, secrets encrypted (host opt-in), one-click re-import.
 
 ## Goal (one line)
-Open **From database**, fill in the server details, click **Connect**, tick tables or write a
-SELECT, click **Import**. Each becomes a normal dataset with a **Refresh** button.
+Click **Save recipe** → get `stock_review.json` (or the host saves it). Next month upload the new
+files, click **Load recipe**, confirm the matches, and all queries, charts and dashboards come back.
 
-Example: Postgres `erp` on `192.168.1.20`, user `report` →
-- pick list: ☑ orders (about 12,000 rows) ☑ customers (about 800 rows) ☐ sales.targets *view*
-- Own query: name `pune_orders`, `SELECT * FROM orders WHERE city = 'Pune'`
-- Import → **erp – orders**, **erp – customers**, **pune_orders**
-- Relate screen, first suggestion: `orders.customer_id = customers.id` ("from the database")
-- Next day: Refresh on **erp – orders** fetches today's rows.
+Example:
+- Nov: upload `sales_nov.csv` (dataset "sales") + `items.xlsx`, link them, build "Margin by city"
+  chart and "Monthly review" dashboard → **Save recipe**.
+- Dec: upload `sales_dec.csv` → **Load recipe** → match screen:
+  `Recipe "sales" → [sales_dec ▼]` (guessed), `Recipe "items" → [items ▼]` → **Apply**.
+- If `sales_dec` has no `Cost` column: the match row shows a red "missing: Cost", **Apply** stays
+  off, and nothing changes until a file with `Cost` is uploaded or picked.
 
-## Decisions (agreed after grilling)
+## Decisions (agreed)
 | # | Topic | Decision |
 |---|-------|----------|
-| 1 | Who connects | The user types the details in a form (no admin presets). |
-| 2 | Driver | Python drivers: `psycopg` (Postgres) and `PyMySQL` (MySQL), as optional extras `my-insights[postgres]` / `[mysql]`. Missing driver → a clear message saying what to install. Rows go through the same text → type checks as CSV/SQLite. |
-| 3 | Where | A third home tab **From database** (next to Upload files and From API): type, host, port, database, user, password, Require SSL; **Test** and **Connect**. Then the same pick list as SQLite, plus an Own query box. |
-| 4 | Schemas | Every schema the user can read, except system ones. Names: `orders` for `public` (Postgres) / the chosen database (MySQL), `sales.orders` for others. |
-| 5 | Row counts | Quick estimate from the server's statistics ("about 12,000 rows"). The real MAX_ROWS check happens during import. |
-| 6 | Own query | Optional: Name + one SELECT (or WITH … SELECT). Several statements or anything else are refused before sending. Runs in a **read-only transaction** with a time limit. |
-| 7 | Read-only | Every read (tables too) runs in a read-only transaction. The tooltip also advises a read-only database user. |
-| 8 | Refresh | Yes, like API. The connection details (with password) stay in the session's memory only: never saved, exported, logged or put in a recipe. Refresh re-reads the table / re-runs the query. Logout/timeout forgets them. |
-| 9 | Network | Allowed by default (company servers are usually 10.x / 192.168.x). New settings `ALLOW_DB_CONNECT` (True) and `DB_ALLOWED_HOSTS` ([] = any; when set, only those hosts). |
-| 10 | SSL | Default "use if available"; a **Require SSL** tick box for cloud databases. No certificate upload. |
-| 11 | Foreign keys | From `information_schema`, same as 8b: top link suggestions, only between tables imported together. |
-| 12 | Names | "database – table"; Own query uses the name typed. `unique_name` for clashes. All or nothing per Import. |
-| 13 | Tests | Fake database for normal tests; live tests run only when `MY_INSIGHTS_TEST_POSTGRES` / `MY_INSIGHTS_TEST_MYSQL` is set. One run against Postgres and MySQL in Docker. |
+| 1 | Scope | Whole workspace: links, calculated fields, query-datasets, queries, charts, all dashboards. |
+| 2 | Matching | Auto-guess by name, then a confirm screen with a dropdown per recipe dataset. |
+| 3 | Storage | Host hooks (setting) **plus** plain `.json` download / upload when the host sets none. |
+| 4 | Load from host | Host shows its own list; its link opens `/recipe/load/?id=7`; add-on calls the host's load hook. |
+| 5 | Apply | **Replace** current queries / charts / dashboards / combined datasets (warning first). Uploaded data stays. |
+| 6 | Missing columns | **Stop with an error.** Apply is refused until every column the recipe uses is there, so no wrong report is ever shown. Message names each gap, e.g. "“sales” is missing: Cost, Qty. Upload a file with these columns or pick another dataset." Nothing is changed when refused. Extra columns are fine. |
+| 7 | API / DB | 9a: recipe holds **no** URLs, hosts, headers, SQL or secrets; those datasets match by name like files. 9b adds sources with encrypted secrets (`RECIPE_KEEP_SECRETS`, off by default). |
 
 ## What we build
-1. **`my_insights/db_connect.py` (new)**
-   - `DbServer` (in `workspace.py`): kind, host, port, database, user, password, require_ssl. Memory only, `repr` hides the password.
-   - `connect(server)`: checks `ALLOW_DB_CONNECT`, `DB_ALLOWED_HOSTS`, the driver is installed;
-     connects with `DB_TIMEOUT_SECONDS`; friendly messages for wrong password, unknown host,
-     refused port, unknown database, SSL required (logged first, never with the password).
-   - `list_tables(server)`: tables + views with estimated rows and columns
-     (Postgres `pg_class.reltuples`, MySQL `information_schema.tables.table_rows`).
-   - `check_select(sql)`: one statement, starts with SELECT / WITH, else refused.
-   - Fetch rows in batches inside a read-only transaction with a statement time limit
-     (Postgres `SET TRANSACTION READ ONLY` + `statement_timeout`; MySQL `START TRANSACTION READ ONLY` + `max_execution_time`).
-2. **`db_loading.py`**: split the SQLite-only parts so `_load_table` and `_add_foreign_keys` work from any "source" (SQLite file or server): one small `rows(table)` / `foreign_keys(table)` interface. `PendingDb` also holds a live server pick list (no open connection kept: connect per action).
-3. **`workspace.py`**: `DbServer`; `Dataset.db_source` (server + table or query) for Refresh.
-4. **Refresh**: `dataset_refresh` handles `db_source` the same way as `api_source` (re-read, same names, types re-checked).
-5. **Views/URLs**: `db_test`, `db_connect` (shows pick list), reuse `db_import` / `db_cancel` with the Own query fields. Same CSRF / lock / `check_capacity`.
-6. **Templates (HTMX, Alpine, DaisyUI)**: From database tab form (port fills 5432 / 3306 when the type changes), pick list partial reused with "about N rows", Own query box; tooltips on every field.
-7. **`conf.py`**: `ALLOW_DB_CONNECT`, `DB_ALLOWED_HOSTS`, `DB_TIMEOUT_SECONDS` (30).
-8. **`pyproject.toml`**: extras `postgres = ["psycopg[binary]"]`, `mysql = ["PyMySQL"]`; dev group gets both.
-9. **Docs**: `docs/project.md` 8c line, README settings, this plan.
+1. **`my_insights/recipe.py` (new)**
+   - `to_recipe(workspace) -> dict`: `{"my_insights_recipe": 1, "sources": [...], "combined": [...],
+     "query_datasets": [...], "queries": [...], "charts": [...], "dashboards": [...]}`.
+     Sources = uploaded / API / DB / JSON-child datasets: name + column names/kinds + calculated
+     fields only. Ids are recipe-local. Never any rows, samples, `api_source`, `db_source`.
+   - `read_recipe(raw: bytes) -> dict`: size limit (`RECIPE_MAX_KB`), valid JSON, version, known
+     keys and types; specific messages ("This file is not a My Insights recipe", "Recipe version 2
+     needs a newer My Insights"). Logged before shown.
+   - `guess_matches(recipe, workspace)`: exact name (casefold), then name without " (2)" / file
+     extension; each loaded dataset used once.
+   - `missing_columns(recipe, matches)`: per recipe dataset, the columns it **uses** (in links,
+     calculated-field formulas, queries, filters, dashboard filters) that the matched dataset lacks.
+     Any gap, or any recipe dataset left unmatched → `apply_recipe` refuses (checked again on the
+     server at Apply, not just in the screen).
+   - `apply_recipe(workspace, recipe, matches) -> list[str]` (report lines): clear old derived
+     datasets (`Workspace.remove_dataset`), queries, charts, dashboards; copy calculated fields;
+     rebuild combined datasets with `linking.save_link`; query-datasets with
+     `query_dataset.make_query_dataset`; then queries, charts, dashboards with new ids (id map
+     recipe → workspace). Dataclasses ↔ dict via small `asdict` / build helpers.
+2. **`workspace.py`**: `Workspace.pending_recipe: dict | None` (waiting for the match screen).
+3. **`recipe_views.py` (new) + `urls.py`**
+   - `recipe_save` (POST, name field): host `RECIPE_SAVE` hook → message; else download `<name>.json`.
+   - `recipe_upload` (POST file) and `recipe_load` (GET `?id=`, host `RECIPE_LOAD` hook) → store
+     `pending_recipe` → match screen.
+   - `recipe_match` (GET screen / POST Apply), `recipe_cancel`. Same CSRF + workspace lock.
+   - Hook errors: logged, user sees "Could not save / load the recipe: …".
+4. **Templates (HTMX, Alpine, DaisyUI)**: "Recipe" menu in top bar (Save recipe dialog with name,
+   Load recipe file box); match screen partial (one row per recipe dataset, dropdown, red "missing:
+   Cost, Qty" badge, Apply disabled with a tooltip saying why, "Upload more files" link); home banner "Recipe waiting: match now". Tooltips
+   on every button. After Apply: report list on the home page.
+5. **`conf.py`**: `RECIPE_SAVE` (dotted path or None), `RECIPE_LOAD` (dotted path or None),
+   `RECIPE_MAX_KB` (512). Hook signatures: `save(request, recipe: dict, name: str) -> str`
+   (message shown), `load(request, recipe_id: str) -> dict`.
+6. **Demo**: a tiny demo hook (saves to demo's own model or a dict) to try the host path.
+7. **Docs**: archive current `plan.md` → `plan_phase8c.md`; this plan → `plan.md`; README settings
+   and hook example; `project.md` recipe section (match screen, replace).
 
-## Tests (`tests/test_db_connect.py`)
-- Form → server details; password never in logs, repr, recipe or export.
-- Host not in `DB_ALLOWED_HOSTS` refused; switched off refused; driver missing message.
-- `check_select`: SELECT/WITH pass; `DELETE`, `SELECT 1; DROP TABLE x`, empty refused.
-- Fake server: listing with estimates and schema names, import ticked tables + own query, types like CSV, row limit, all or nothing, foreign key first suggestion, Refresh re-reads.
-- Connection errors become friendly messages (wrong password, unknown host, timeout).
-- Live (skipped unless env var set): Postgres and MySQL in Docker — list, import, FK, read-only (a write is refused), Refresh.
-- Run `uv run pytest`; browser check in the preview against the Docker Postgres.
+## Reuse
+`linking.save_link` / `refresh_view`, `query_dataset.make_query_dataset`, `dashboard.create` /
+`add_tile`, `Workspace.remove_dataset` / `unique_name`, existing broken messages in
+`querying.py` (plan.problems), `charting.broken_reason`, `dashboard.py:495` KPI message.
+
+## Tests (`tests/test_recipe.py`)
+- Round trip: build workspace → recipe → fresh workspace with same files → apply → same queries,
+  charts, dashboards, links, calculated fields (ids remapped, tiles point at right items).
+- Recipe holds no data: sample values, API URL/headers, DB host/password never in the JSON.
+- Matching: exact, case, "(2)", unmatched left empty; missing columns listed.
+- Apply replaces old work; uploaded data kept.
+- Missing used column (in query, formula, link, filter) → Apply refused with a message naming
+  dataset + columns; workspace unchanged. Missing unused column → allowed. Unmatched → refused.
+- Bad files: not JSON, too big, wrong version, wrong types → specific messages.
+- Hooks: fake save/load functions called; hook error → friendly message; no hooks → download.
+- Views: CSRF, lock, cancel. Run `uv run pytest`; browser check in preview (save, upload new file, apply).
 
 ## End of phase
-Update "Current phase" in `CLAUDE.md`, then run `/code-review` and `/simplify`.
+Update "Current phase" in `my-insights/CLAUDE.md`, then `/code-review` and `/simplify`.

@@ -13,6 +13,8 @@
 
   {% for pending in pending_databases %}{% include "my_insights/partials/db_pick.html" %}{% endfor %}
 
+  {% include "my_insights/partials/recipe_card.html" %}
+
   {% if datasets %}
   <section class="card card-border bg-base-100" aria-labelledby="dashboards-heading">
     <div class="card-body gap-3 p-4">

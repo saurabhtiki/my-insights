@@ -124,11 +124,24 @@ def page_context(request, workspace, expired: bool, **extra) -> dict:
         "allow_db": conf.get("ALLOW_DB_IMPORT"),
         "allow_db_connect": conf.get("ALLOW_DB_CONNECT"),
         "pending_databases": list(workspace.pending_databases.values()) if workspace else [],
+        "pending_recipe": workspace.pending_recipe if workspace else None,
+        "can_save_recipe": bool(workspace and _has_setup(workspace)),
+        "recipe_to_host": bool(conf.get("RECIPE_SAVE")),
         "idle_warn_seconds": conf.get("IDLE_WARN_MINUTES") * 60,
         "idle_clear_seconds": conf.get("IDLE_CLEAR_MINUTES") * 60,
         "idle_clear_minutes": conf.get("IDLE_CLEAR_MINUTES"),
         **extra,
     }
+
+
+def _has_setup(workspace) -> bool:
+    """Is there anything a recipe would hold? (queries, charts, dashboards, links, formulas)"""
+    return bool(
+        workspace.queries
+        or workspace.charts
+        or workspace.dashboards
+        or any(d.link or d.query_id or d.calculated for d in workspace.datasets.values())
+    )
 
 
 def _cards(workspace) -> list[dict]:
@@ -167,6 +180,11 @@ def home(request):
     if workspace is not None:
         notice, workspace.notice = workspace.notice, ""
     results = [{"ok": False, "title": "Not done", "message": notice}] if notice else []
+    if workspace is not None and workspace.done_notice:
+        results += [
+            {"ok": True, "title": "Done", "message": line} for line in workspace.done_notice
+        ]
+        workspace.done_notice = []
     context = page_context(request, workspace, expired, cards=_cards(workspace), results=results)
     return render(request, "my_insights/home.html", context)
 

@@ -44,6 +44,15 @@ DEFAULTS = {
     "DB_CONNECT_SECONDS": 15,  # wait this long for the server to answer
     # Longest one read may run on the server (a table import or an own query), then it stops.
     "DB_QUERY_SECONDS": 300,
+    # Recipes: a setup (links, queries, charts, dashboards) as JSON with no data. With no
+    # hooks the user downloads / uploads a .json file. A host can store recipes itself:
+    #   RECIPE_SAVE = "stock_audit.recipes.save"  → save(request, recipe: dict, name) -> str
+    #       (the message shown, e.g. "Saved as Monthly review")
+    #   RECIPE_LOAD = "stock_audit.recipes.load"  → load(request, recipe_id: str) -> dict
+    #       (the host's own page links to /insights/recipe/load/?id=7)
+    "RECIPE_SAVE": None,
+    "RECIPE_LOAD": None,
+    "RECIPE_MAX_KB": 512,  # largest recipe read (a recipe holds no data, so it stays small)
     "IDLE_WARN_MINUTES": 25,
     "IDLE_CLEAR_MINUTES": 30,
 }

@@ -3,4 +3,4 @@ Reusable Django add-on: upload CSV/Excel, explore, build queries/charts/dashboar
 Scope: `docs/project.md`. Current plan: `docs/plan.md`.
 
 # Current phase
-Phase 8c done (From database: Postgres/MySQL connect, tick tables or own SELECT, read-only, Refresh; 412 tests).
+Phase 9a done (Recipes: save setup as JSON or via host hooks, load + match screen, all-or-nothing apply; 442 tests). Next: 9b (API/DB sources, encrypted secrets).

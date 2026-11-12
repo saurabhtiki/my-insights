@@ -8,6 +8,7 @@ from . import (
     export_views,
     link_views,
     query_views,
+    recipe_views,
     views,
 )
 
@@ -21,6 +22,11 @@ urlpatterns = [
     path("database/connect/", db_views.db_connect_view, name="db_connect"),
     path("database/<str:token>/import/", db_views.db_import, name="db_import"),
     path("database/<str:token>/cancel/", db_views.db_cancel, name="db_cancel"),
+    path("recipe/save/", recipe_views.recipe_save, name="recipe_save"),
+    path("recipe/upload/", recipe_views.recipe_upload, name="recipe_upload"),
+    path("recipe/load/", recipe_views.recipe_load, name="recipe_load"),
+    path("recipe/match/", recipe_views.recipe_match, name="recipe_match"),
+    path("recipe/cancel/", recipe_views.recipe_cancel, name="recipe_cancel"),
     path("api/test/", api_views.api_test, name="api_test"),
     path("api/import/", api_views.api_import, name="api_import"),
     path("datasets/<int:dataset_id>/refresh/", db_views.dataset_refresh, name="dataset_refresh"),
