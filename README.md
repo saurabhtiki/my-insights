@@ -23,8 +23,17 @@ only (DuckDB) and is never saved to disk or the database.
        # Recipes (optional): store them in the host instead of a .json download.
        "RECIPE_SAVE": "stock_audit.recipes.save",
        "RECIPE_LOAD": "stock_audit.recipes.load",
+       # API / database datasets in a recipe are fetched again on Apply. True (default)
+       # keeps headers, keys and the DB password in PLAIN TEXT in the recipe; False saves
+       # them empty and asks the user on load.
+       "RECIPE_KEEP_SECRETS": True,
+       # "Ask AI" (default on): users type an OpenAI-style address, their own key and a model.
+       "ALLOW_AI": True,
+       "AI_TIMEOUT_SECONDS": 60,
    }
    ```
+   ⚠ With `RECIPE_KEEP_SECRETS` on, a recipe file holds passwords and API keys as plain text:
+   keep it inside the company, like your `.env` file.
    Recipe hooks, e.g. in `stock_audit/recipes.py`:
    ```python
    def save(request, recipe: dict, name: str) -> str:
@@ -43,6 +52,11 @@ only (DuckDB) and is never saved to disk or the database.
    that process's memory.
 
 Logging out (Django's `user_logged_out` signal) wipes that user's data.
+
+**Ask AI** sends the AI service: dataset names, column names and types, the user's
+"Notes for AI", the question and the last 5 questions with the AI's answers. Never a value or
+a row. The key stays in the user's in-memory session only. The address follows
+`API_BLOCK_INTERNAL` / `API_ALLOWED_HOSTS`, like Import from API.
 
 ## Work on it
 

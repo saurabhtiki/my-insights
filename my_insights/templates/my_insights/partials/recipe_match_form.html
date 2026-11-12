@@ -16,7 +16,7 @@
     <div role="alert" class="alert alert-soft alert-error"><span>{{ refused }}</span></div>
     {% endif %}
 
-    {% if not options %}
+    {% if not options and not all_fetched %}
     <div role="alert" class="alert alert-soft alert-warning">
       <span>No data is loaded yet. Upload the recipe's files first, then come back here.</span>
       <a href="{% url 'my_insights:home' %}" class="btn btn-sm" title="Go to the upload box">Upload files</a>
@@ -59,14 +59,50 @@
               <select name="match_{{ row.entry.id }}" class="select select-sm w-full max-w-xs" aria-label="Dataset for {{ row.entry.name }}"
                       title="Pick the dataset that holds this data now, e.g. this month's file">
                 <option value="">{% if row.entry.required %}— pick a dataset —{% else %}— skip it —{% endif %}</option>
+                {% if row.fetch and not row.fetch.off %}
+                <option value="fetch" {% if row.picked == "fetch" %}selected{% endif %}>{{ row.fetch.label }}</option>
+                {% endif %}
                 {% for option in options %}
                 <option value="{{ option.dataset_id }}" {% if option.dataset_id == row.picked %}selected{% endif %}>{{ option.name }}</option>
                 {% endfor %}
               </select>
+              {% if row.picked == "fetch" %}
+              {% if row.fetch.where %}
+              <div class="mt-1 text-xs text-base-content/60" title="Fetched again from here when you click Apply. Keys are not shown">{{ row.fetch.where }}</div>
+              {% endif %}
+              {% if row.fetch.shared_with %}
+              <div class="mt-1 text-xs text-base-content/60" title="It comes from the same API or server, so the key or password is typed once">Uses the login of “{{ row.fetch.shared_with }}”.</div>
+              {% endif %}
+              {% for field in row.fetch.missing %}
+              <label class="mt-1 block text-xs">
+                <span class="text-base-content/70">{{ field.label }}</span>
+                <input type="password" id="secret_{{ row.entry.id }}_{{ field.number }}" name="secret_{{ row.entry.id }}_{{ field.number }}"
+                       class="input input-sm w-full max-w-xs" autocomplete="off"
+                       placeholder="{% if field.typed %}typed ✓ (type again to change){% else %}type it here{% endif %}"
+                       title="Needed to fetch the data. Kept only until you log out, never put in the recipe">
+              </label>
+              {% endfor %}
+              {% if row.fetch.saved %}
+              <details class="mt-1 text-xs text-base-content/70" {% if row.fetch.any_typed %}open{% endif %}>
+                <summary class="cursor-pointer select-none" title="The recipe has a saved key or password. Change it only if it no longer works">Use another key / password</summary>
+                {% for field in row.fetch.saved %}
+                <label class="mt-1 block">
+                  <span>{{ field.label }}</span>
+                  <input type="password" id="secret_{{ row.entry.id }}_{{ field.number }}" name="secret_{{ row.entry.id }}_{{ field.number }}"
+                         class="input input-sm w-full max-w-xs" autocomplete="off"
+                         placeholder="{% if field.typed %}typed ✓ (type again to change){% else %}saved (leave empty to keep it){% endif %}"
+                         title="Leave empty to use the one saved in the recipe">
+                </label>
+                {% endfor %}
+              </details>
+              {% endif %}
+              {% endif %}
             </td>
             <td class="align-top">
               {% if row.problem %}
               <span class="badge badge-error badge-soft h-auto py-1 text-left" title="Upload a file with these columns, or pick another dataset">{{ row.problem }}</span>
+              {% elif row.picked == "fetch" %}
+              <span class="badge badge-info badge-soft" title="Fetched again when you click Apply; its columns are checked then">↻ On Apply</span>
               {% elif row.picked %}
               <span class="badge badge-success badge-soft" title="Every column the recipe needs is there">✓ Ready</span>
               {% else %}

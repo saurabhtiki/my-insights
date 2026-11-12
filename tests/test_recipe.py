@@ -128,8 +128,8 @@ def saved(workspace, name="Monthly"):
 def test_recipe_holds_the_setup_but_no_data(setup):
     items = next(d for d in setup.datasets.values() if d.name == "items")
     items.api_source = ApiSource("https://erp.example/items", headers="Authorization: secret-key")
-    text = json.dumps(to_recipe(setup, "Monthly"))
-    for data in ("Apple", "Ball", "erp.example", "secret-key", "samples"):
+    text = json.dumps(to_recipe(setup, "Monthly", keep_secrets=False))
+    for data in ("Apple", "Ball", "secret-key", "samples"):
         assert data not in text
     recipe = json.loads(text)
     assert recipe["my_insights_recipe"] == 1 and recipe["name"] == "Monthly"

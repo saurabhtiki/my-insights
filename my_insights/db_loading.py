@@ -191,7 +191,7 @@ def load_tables(
             datasets = _read_jobs(workspace, reader, jobs, pending.file_name)
         if pending.server is not None:
             for job, dataset in zip(jobs, datasets, strict=True):
-                dataset.db_source = DbSource(pending.server, job.select)
+                dataset.db_source = DbSource(pending.server, job.select, job.table)
         workspace.drop_pending(token)
     return datasets
 
@@ -279,6 +279,23 @@ def _attach_foreign_keys(by_table: dict[str, Dataset], keys) -> None:
             c.name for c in lookup.columns
         }:
             dataset.foreign_keys.append((column, lookup.dataset_id, ref_column))
+
+
+def read_from_server(
+    workspace: Workspace, server, wanted: list[tuple[str, str, str]]
+) -> list[Dataset]:
+    """New datasets from a server, one per (name, SELECT, table or ""), all or nothing: a
+    recipe fetching its database datasets again. Foreign keys between the tables come too.
+    Raises UploadRejected."""
+    jobs = [
+        _Job(f"“{name}”", name, f"{server.label} › {name}", select, table)
+        for name, select, table in wanted
+    ]
+    with db_connect.reading(server) as reader, workspace.lock:
+        datasets = _read_jobs(workspace, reader, jobs, server.label)
+    for job, dataset in zip(jobs, datasets, strict=True):
+        dataset.db_source = DbSource(server, job.select, job.table)
+    return datasets
 
 
 def refresh_from_server(workspace: Workspace, dataset: Dataset) -> list[str]:

@@ -53,6 +53,15 @@ DEFAULTS = {
     "RECIPE_SAVE": None,
     "RECIPE_LOAD": None,
     "RECIPE_MAX_KB": 512,  # largest recipe read (a recipe holds no data, so it stays small)
+    # A recipe remembers where API / database datasets came from, so Apply fetches them again.
+    # True: API headers, keys in the address and the database password are kept as they are,
+    # in PLAIN TEXT (keep recipe files inside the company). False: saved empty, asked on load.
+    "RECIPE_KEEP_SECRETS": True,
+    # AI assistant: the user types an OpenAI-style service address, key and model, then asks in
+    # plain words; the AI fills in the query screen. It sees dataset / column names and types
+    # only, never values. The address follows API_BLOCK_INTERNAL / API_ALLOWED_HOSTS.
+    "ALLOW_AI": True,
+    "AI_TIMEOUT_SECONDS": 60,
     "IDLE_WARN_MINUTES": 25,
     "IDLE_CLEAR_MINUTES": 30,
 }

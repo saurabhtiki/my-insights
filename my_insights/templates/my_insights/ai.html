@@ -1,0 +1,23 @@
+{% extends base_template %}
+{% block title %}Ask AI{% endblock %}
+{% block content %}
+{% include "my_insights/partials/idle_script.html" %}
+<div class="space-y-6" hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
+  <div class="breadcrumbs text-sm">
+    <ul>
+      <li><a href="{% url 'my_insights:home' %}" title="Back to all your uploaded data">Your data</a></li>
+      <li>Ask AI</li>
+    </ul>
+  </div>
+
+  {% with heading="Ask AI" subheading="Ask in plain words. The AI fills in the query screen; you check it, then save. It sees column names and types only, never your data." %}
+    {% include "my_insights/partials/top_bar.html" %}
+  {% endwith %}
+
+  <div class="grid gap-6 lg:grid-cols-[22rem_1fr]">
+    {% include "my_insights/partials/ai_settings.html" %}
+    {% include "my_insights/partials/ai_question.html" %}
+  </div>
+  {% include "my_insights/partials/idle_watch.html" %}
+</div>
+{% endblock %}

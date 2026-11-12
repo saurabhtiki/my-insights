@@ -1,0 +1,4 @@
+<datalist id="ai-model-list">{% for model in models %}<option value="{{ model }}">{% endfor %}</datalist>
+{% if problem %}<p role="alert" class="mt-1 text-xs text-error">{{ problem }} You can still type the name.</p>
+{% elif models %}<p class="mt-1 text-xs text-success">{{ models|length }} model{{ models|length|pluralize }} found: click the Model box to pick one.</p>
+{% else %}<p class="mt-1 text-xs text-base-content/60">The service listed no models. Type the name.</p>{% endif %}

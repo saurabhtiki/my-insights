@@ -12,7 +12,7 @@ from django.views.decorators.csrf import csrf_exempt, csrf_protect
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 from django_datatable import formula_safe, rows_csv_response
 
-from . import conf
+from . import conf, recipe_sources
 from .exporting import attachment
 from .exporting import file_name as export_file_name
 from .recipe import (
@@ -47,7 +47,7 @@ def recipe_save(request):
     if workspace is None:
         return panel_response(request, None, [], expired)
     name = " ".join(request.POST.get("name", "").split())[:NAME_LENGTH] or "My recipe"
-    recipe = to_recipe(workspace, name)
+    recipe = to_recipe(workspace, name, keep_secrets=conf.get("RECIPE_KEEP_SECRETS"))
     save = _hook("RECIPE_SAVE")
     if save is None:
         response = HttpResponse(
@@ -159,25 +159,43 @@ def recipe_match(request):
                 "Another recipe was loaded meanwhile (in another tab). Check the picks below.",
             )
             return _render_match(request, context)
+        applying = request.method == "POST" and request.POST.get("action") == "apply"
         if request.method == "POST":
             matches = _picked(request.POST, recipe)
-            if request.POST.get("action") == "apply":
-                try:
-                    workspace.done_notice = apply_recipe(workspace, recipe, matches)
-                except RecipeError as error:
-                    logger.info("Recipe not applied: %s", error)
-                    context = _match_context(request, workspace, recipe, matches, str(error))
-                    return _render_match(request, context)
-                workspace.pending_recipe = None
-                if request.headers.get("HX-Request") == "true":
-                    return HttpResponse(
-                        status=204, headers={"HX-Redirect": reverse("my_insights:home")}
-                    )
-                return redirect("my_insights:home")
+            _keep_typed(request.POST, recipe)
         else:
             matches = guess_matches(recipe, workspace)
-        context = _match_context(request, workspace, recipe, matches)
-    return _render_match(request, context)
+        if applying and recipe.get("applying"):
+            context = _match_context(
+                request,
+                workspace,
+                recipe,
+                matches,
+                "This recipe is being applied already (in another tab). Wait a moment.",
+            )
+            return _render_match(request, context)
+        if not applying:
+            context = _match_context(request, workspace, recipe, matches)
+            return _render_match(request, context)
+        recipe["applying"] = True
+    # Applied without holding the lock: fetching an API / database may take a while, and the
+    # user's other pages should keep working meanwhile. apply_recipe locks what it changes.
+    try:
+        notice = apply_recipe(workspace, recipe, matches, recipe["typed"])
+    except RecipeError as error:
+        logger.info("Recipe not applied: %s", error)
+        with workspace.lock:
+            context = _match_context(request, workspace, recipe, matches, str(error))
+        return _render_match(request, context)
+    finally:
+        recipe["applying"] = False
+    with workspace.lock:
+        workspace.done_notice = notice
+        if workspace.pending_recipe is recipe:
+            workspace.pending_recipe = None
+    if request.headers.get("HX-Request") == "true":
+        return HttpResponse(status=204, headers={"HX-Redirect": reverse("my_insights:home")})
+    return redirect("my_insights:home")
 
 
 def _render_match(request, context):
@@ -190,21 +208,52 @@ def _picked(data, recipe: dict) -> dict[int, int | None]:
     picks = {}
     for entry in sources(recipe):
         value = data.get(f"match_{entry['id']}", "")
-        picks[entry["id"]] = int(value) if re.fullmatch(r"[0-9]{1,9}", value) else None
+        connection = entry.get("connection")
+        if (
+            value == recipe_sources.FETCH
+            and connection
+            and not recipe_sources.switched_off(connection)
+        ):
+            picks[entry["id"]] = recipe_sources.FETCH
+        else:
+            picks[entry["id"]] = int(value) if re.fullmatch(r"[0-9]{1,9}", value) else None
     return picks
 
 
+def _keep_typed(data, recipe: dict) -> None:
+    """Remember typed keys / passwords (memory only, like a manual import) so the form can
+    be redrawn without sending them back to the browser. Empty = keep what was typed before."""
+    typed = recipe.setdefault("typed", {})  # {group: {secret key: value}}: one per API / server
+    for entry in sources(recipe):
+        connection = entry.get("connection")
+        if connection is None:
+            continue
+        for number, field in enumerate(recipe_sources.secret_fields(connection)):
+            value = data.get(f"secret_{entry['id']}_{number}", "")
+            if value:
+                group = recipe_sources.group_of(connection)
+                typed.setdefault(group, {})[field["key"]] = value
+
+
 def _match_context(request, workspace, recipe, matches, refused: str = "") -> dict:
-    problems = match_problems(recipe, workspace, matches)
-    rows = [
-        {
-            "entry": entry,
-            "picked": matches.get(entry["id"]),
-            "problem": problems.get(entry["id"], ""),
-            "columns": needed_columns(entry),
-        }
-        for entry in sources(recipe)
-    ]
+    typed = recipe.setdefault("typed", {})
+    problems = match_problems(recipe, workspace, matches, typed)
+    rows, asked_in = [], {}  # group → the row that shows its key / password boxes
+    for entry in sources(recipe):
+        picked = matches.get(entry["id"])
+        group = recipe_sources.group_of(entry["connection"]) if entry.get("connection") else ""
+        shared_with = asked_in.get(group, "") if picked == recipe_sources.FETCH else ""
+        if group and picked == recipe_sources.FETCH and not shared_with:
+            asked_in[group] = entry["name"]
+        rows.append(
+            {
+                "entry": entry,
+                "picked": picked,
+                "problem": problems.get(entry["id"], ""),
+                "columns": needed_columns(entry),
+                "fetch": _fetch_info(recipe, entry, typed.get(group, {}), shared_with),
+            }
+        )
     built = [e["name"] for e in recipe["datasets"] if e["kind"] != "source"]
     return page_context(
         request,
@@ -213,6 +262,7 @@ def _match_context(request, workspace, recipe, matches, refused: str = "") -> di
         recipe=recipe,
         rows=rows,
         options=candidates(workspace),
+        all_fetched=all(row["picked"] == recipe_sources.FETCH for row in rows),
         ready=not problems,
         refused=refused,
         built_names=built,
@@ -221,6 +271,37 @@ def _match_context(request, workspace, recipe, matches, refused: str = "") -> di
         dashboard_names=[d.name for d in recipe["dashboards"]],
         has_work=bool(workspace.queries or workspace.charts or workspace.dashboards),
     )
+
+
+def _fetch_info(recipe: dict, entry: dict, typed: dict, shared_with: str) -> dict | None:
+    """For the match screen: where the dataset came from and the secrets to type, if any.
+    shared_with: an earlier row from the same API / server, whose boxes this row uses."""
+    connection = entry.get("connection")
+    if connection is None:
+        return None
+    if connection["type"] == "api_child":
+        parent = next((e for e in sources(recipe) if e["id"] == connection["parent"]), None)
+        return {
+            "label": f"↻ Fetch again (comes with “{parent['name'] if parent else '?'}”)",
+            "where": "",
+            "off": recipe_sources.switched_off(connection),
+            "fields": [],
+        }
+    fields = [
+        field | {"number": number, "typed": bool(typed.get(field["key"]))}
+        for number, field in enumerate(recipe_sources.secret_fields(connection))
+    ]
+    kind = "database" if connection["type"] == "database" else "API"
+    return {
+        "label": f"↻ Fetch again from saved {kind}",
+        "where": recipe_sources.where_from(connection),
+        "off": recipe_sources.switched_off(connection),
+        "fields": fields,
+        "shared_with": shared_with,
+        "missing": [] if shared_with else [f for f in fields if not f["saved"]],
+        "saved": [] if shared_with else [f for f in fields if f["saved"]],
+        "any_typed": any(f["typed"] for f in fields if f["saved"]),
+    }
 
 
 @require_GET

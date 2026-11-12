@@ -1,6 +1,7 @@
 """Import from API: requests, safety checks, error messages, the views and Refresh.
 No real network: the opener and the address lookup are replaced."""
 
+import http.client
 import io
 import json
 import urllib.error
@@ -84,8 +85,9 @@ def test_bad_form_values(monkeypatch, source, message):
 )
 def test_internal_addresses_are_refused(monkeypatch, address):
     api = FakeApi(monkeypatch, addresses=[address])
-    with insights_settings(API_BLOCK_INTERNAL=True), pytest.raises(
-        ApiFailed, match="inside the network"
+    with (
+        insights_settings(API_BLOCK_INTERNAL=True),
+        pytest.raises(ApiFailed, match="inside the network"),
     ):
         fetch_json(ApiSource("http://intranet.example.com/data"))
     assert api.requests == []
@@ -101,8 +103,9 @@ def test_allowed_hosts_may_be_internal(monkeypatch):
 def test_a_redirect_inside_the_network_is_refused(monkeypatch):
     monkeypatch.setattr(api_import, "_resolve", lambda host: ["10.0.0.1"])
     handler = api_import._CheckedRedirects()
-    with insights_settings(API_BLOCK_INTERNAL=True), pytest.raises(
-        ApiFailed, match="inside the network"
+    with (
+        insights_settings(API_BLOCK_INTERNAL=True),
+        pytest.raises(ApiFailed, match="inside the network"),
     ):
         handler.redirect_request(None, None, 302, "Found", {}, "http://internal.example.com/")
 
@@ -115,6 +118,8 @@ def test_a_redirect_inside_the_network_is_refused(monkeypatch):
         (http_error(503), "server had a problem"),
         (TimeoutError(), "longer than 30 seconds"),
         (urllib.error.URLError("refused"), "Could not reach the API"),
+        (http.client.RemoteDisconnected("gone"), "closed the connection"),
+        (ConnectionResetError(), "closed the connection"),
         (b"<!DOCTYPE html><html>", "not JSON"),
         (b"   ", "empty reply"),
     ],

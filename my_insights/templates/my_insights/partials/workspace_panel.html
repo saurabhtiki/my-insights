@@ -119,6 +119,7 @@
             <a href="{% url 'my_insights:dataset' dataset.dataset_id %}" class="btn btn-sm" title="See each column's type, blanks and examples">Open profile</a>
             <a href="{% url 'my_insights:query' %}?dataset={{ dataset.dataset_id }}" class="btn btn-sm btn-primary btn-soft" title="Ask a question of this data, e.g. Sum of Amount by Month">New query</a>
             <a href="{% url 'my_insights:query' %}?dataset={{ dataset.dataset_id }}&tab=chart" class="btn btn-sm btn-primary btn-soft" title="Draw a chart of this data, e.g. Sum of Amount by Month as columns">New chart</a>
+            {% if allow_ai %}<a href="{% url 'my_insights:ai' %}?dataset={{ dataset.dataset_id }}" class="btn btn-sm btn-secondary btn-soft" title="Ask in plain words, e.g. “monthly sales by branch”. The AI fills in a query for you to check.">✨ Ask AI</a>{% endif %}
             {% if dataset.db_source %}
             <button type="button" class="btn btn-sm btn-accent btn-soft"
                     hx-post="{% url 'my_insights:dataset_refresh' dataset.dataset_id %}" hx-target="#workspace-panel" hx-swap="outerHTML" hx-disabled-elt="this"

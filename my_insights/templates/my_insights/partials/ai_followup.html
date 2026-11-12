@@ -1,0 +1,22 @@
+<div id="ai-followup" role="status" class="alert alert-soft alert-info items-start">
+  <span aria-hidden="true">✨</span>
+  <div class="w-full min-w-0 space-y-2">
+    {% if ai_draft %}
+    <p class="text-sm"><b>Drafted by AI</b> from “{{ ai_draft.question }}”.{% if ai_draft.note %} {{ ai_draft.note }}{% endif %} Check the boxes, then Save.</p>
+    {% endif %}
+    {% if problem %}<p role="alert" class="text-sm text-error">{{ problem }}</p>{% endif %}
+    <form class="join w-full" method="post" action="{% url 'my_insights:ai_draft' %}"
+          hx-post="{% url 'my_insights:ai_draft' %}" hx-target="#ai-followup" hx-swap="outerHTML" hx-disabled-elt="find button">
+      {% csrf_token %}
+      <input type="hidden" name="from" value="query">
+      <input type="hidden" name="dataset" value="{% if hint %}{{ hint }}{% else %}{{ dataset.dataset_id }}{% endif %}">
+      <input name="question" required maxlength="{{ max_question }}" value="{% if problem %}{{ question }}{% endif %}"
+             class="input input-sm join-item w-full" placeholder="Change it, e.g. show average also · only Pune · top 5"
+             title="A follow-up: the AI remembers your earlier questions and changes this query">
+      <button class="btn btn-sm btn-primary join-item" title="Ask the AI to change this query">
+        <span class="loading loading-spinner loading-xs htmx-indicator"></span>Ask
+      </button>
+    </form>
+    <a href="{% url 'my_insights:ai' %}" class="link link-hover text-xs" title="Settings, Notes for AI and a fresh question">Ask AI page</a>
+  </div>
+</div>

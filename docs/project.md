@@ -36,16 +36,16 @@ My Insights is a reusable Django add-on. Users upload 1 or more tabular data set
    Results export to CSV or Excel, and charts export as images,dashboards in HTML. Cells starting with `=`, `+`, `-`, or `@` are escaped so they cannot run as formulas when opened in Excel.
 
 7. **AI assistant (optional)**
-   The user adds their own AI provider endpoint and API key, selects a model, and describes the request in plain language. The AI drafts a query. It only sees dataset structure (column names and types), not the data. The user reviews every query before it runs. The key lives in the session only, never in the database.
+   The user adds their own AI provider endpoint and API key, selects a model, and describes the request in plain language. The AI drafts a query. It only sees dataset structure (column names and types), not the data. The user reviews every query before it runs. The key lives in the session only, never in the database. Optional "Notes for AI" map the user's words to columns (e.g. Item code = "Item no"), and the AI remembers the last 5 questions so follow-ups work ("show average also"). It also picks a chart type.
 
 ## Recipes and host hooks
-- A **recipe** is a small JSON description of the whole setup: links, calculated fields, queries, charts, and dashboards. It never contains data, sample values, API addresses or database details.
+- A **recipe** is a small JSON description of the whole setup: links, calculated fields, queries, charts, and dashboards. It never contains data or sample values. For API / database datasets it remembers where they came from (address, headers, server, SQL), so Apply fetches them again.
 - **Save recipe** downloads a `.json` file. A host app can store recipes itself instead, through two settings: `RECIPE_SAVE` → `save(request, recipe, name)` and `RECIPE_LOAD` → `load(request, recipe_id)`. The host shows its own list and links to `/insights/recipe/load/?id=7`.
 - Example: Stock Audit's "Save recipe" stores the JSON in its own table; next month the user clicks it in Stock Audit's list.
 - To reuse a recipe, the user uploads the new files and loads the recipe. A match screen guesses which dataset is which (same name, then similar name with the right columns) and lets the user change it.
 - Every column the recipe uses must be there. If one is missing, the screen names it (e.g. "“sales” is missing: Cost.") and Apply stays off, so no wrong report is ever shown.
 - Applying replaces the current queries, charts, dashboards and combined datasets; uploaded data stays. It is all or nothing.
-- Later (Phase 9b): recipes may also remember API / database sources, with secrets encrypted and only when the host turns it on.
+- Secrets (API headers, keys in the address, the database password) are kept in plain text by default (`RECIPE_KEEP_SECRETS = True`, internal use). Set it to False and they are saved empty and asked on the match screen. Fetching from a recipe follows the same safety rules as a manual import.
 
 ## Security
 - The API key is kept in the session only.

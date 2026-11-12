@@ -273,6 +273,7 @@ class DbSource:
 
     server: DbServer
     select: str  # the SQL that is run, e.g. SELECT * FROM "sales"."orders"
+    table: str = ""  # the table it reads, e.g. "orders" ("" for an own query)
 
 
 @dataclass
@@ -372,6 +373,13 @@ class Workspace:
         self.pending_recipe: dict | None = None
         self.pending_databases: dict[str, PendingDb] = {}
         self._next_pending = 1
+        # AI assistant (ai_assist.py), memory only: the service's address, key and model
+        # (AiSettings), the user's notes, the last few questions and answers for follow-ups,
+        # and drafts waiting to open on the query screen. Gone with the workspace.
+        self.ai_settings = None
+        self.ai_notes = ""
+        self.ai_history: list[tuple[str, str]] = []
+        self.ai_drafts: dict = {}
 
     def new_dashboard_id(self) -> int:
         dashboard_id = self._next_dashboard_id

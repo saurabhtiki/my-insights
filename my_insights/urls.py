@@ -1,6 +1,7 @@
 from django.urls import path
 
 from . import (
+    ai_views,
     api_views,
     chart_views,
     dashboard_views,
@@ -28,6 +29,12 @@ urlpatterns = [
     path("recipe/match/", recipe_views.recipe_match, name="recipe_match"),
     path("recipe/template/", recipe_views.recipe_template, name="recipe_template"),
     path("recipe/cancel/", recipe_views.recipe_cancel, name="recipe_cancel"),
+    path("ai/", ai_views.ai_page, name="ai"),
+    path("ai/settings/", ai_views.ai_settings_save, name="ai_settings"),
+    path("ai/forget/", ai_views.ai_forget, name="ai_forget"),
+    path("ai/models/", ai_views.ai_models, name="ai_models"),
+    path("ai/draft/", ai_views.ai_draft, name="ai_draft"),
+    path("ai/new-topic/", ai_views.ai_new_topic, name="ai_new_topic"),
     path("api/test/", api_views.api_test, name="api_test"),
     path("api/import/", api_views.api_import, name="api_import"),
     path("datasets/<int:dataset_id>/refresh/", db_views.dataset_refresh, name="dataset_refresh"),

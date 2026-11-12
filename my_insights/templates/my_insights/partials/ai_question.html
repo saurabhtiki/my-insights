@@ -1,0 +1,47 @@
+<section id="ai-question" class="card card-border bg-base-100" aria-labelledby="ai-question-heading">
+  <form class="card-body gap-3 p-4" method="post" action="{% url 'my_insights:ai_draft' %}"
+        hx-post="{% url 'my_insights:ai_draft' %}" hx-target="#ai-question" hx-swap="outerHTML" hx-disabled-elt="find button">
+    {% csrf_token %}
+    <h2 id="ai-question-heading" class="card-title text-base">2 · Your question</h2>
+    {% if done %}<div role="status" class="alert alert-soft alert-success py-2 text-sm">{{ done }}</div>{% endif %}
+    {% if problem %}<div role="alert" class="alert alert-soft alert-error py-2 text-sm">{{ problem }}</div>{% endif %}
+    <div class="grid gap-3 md:grid-cols-2">
+      <label class="form-control block">
+        <span class="label text-sm">Dataset <span class="text-base-content/50">(optional hint)</span></span>
+        <select name="dataset" class="select select-sm w-full" title="Leave on “AI picks”, or point the AI at one dataset. It may still pick another if your question needs it.">
+          <option value="">AI picks</option>
+          {% for dataset in datasets %}<option value="{{ dataset.dataset_id }}"{% if dataset.dataset_id == hint %} selected{% endif %}>{{ dataset.name }}</option>{% endfor %}
+        </select>
+      </label>
+      <label class="form-control block">
+        <span class="label text-sm">Notes for AI <span class="text-base-content/50">(optional, kept for this session)</span></span>
+        <textarea name="notes" rows="2" maxlength="{{ max_notes }}" class="textarea textarea-sm w-full"
+                  placeholder="Item code = &quot;Item no&quot; column&#10;Sale value = &quot;Net Amt&quot;"
+                  title="Your words for fields, so the AI picks the right column. Sent with every question until you change it. Names only: don't paste data here.">{{ ai_notes }}</textarea>
+      </label>
+    </div>
+    <label class="form-control block">
+      <span class="label text-sm">Question</span>
+      <textarea name="question" rows="3" required maxlength="{{ max_question }}" class="textarea w-full"
+                placeholder="e.g. Monthly sales by branch for this financial year, as a line chart"
+                title="Ask in plain words: what to add up or count, per what, for which dates. Ctrl+Enter sends it."
+                @keydown.ctrl.enter.prevent="$el.form.requestSubmit()">{{ question }}</textarea>
+    </label>
+    {% if ai_history %}
+    <div class="rounded-box bg-base-200 p-3 text-sm">
+      <div class="mb-1 flex items-center justify-between gap-2">
+        <span class="font-medium" title="The AI remembers these, so you can say “show average also”. Only the last 5 are kept.">Remembered ({{ ai_history|length }})</span>
+        <button type="button" class="btn btn-ghost btn-xs" hx-post="{% url 'my_insights:ai_new_topic' %}" hx-include="closest form"
+                hx-target="#ai-question" hx-swap="outerHTML" title="Forget earlier questions and start fresh">New topic</button>
+      </div>
+      <ol class="list-decimal space-y-0.5 pl-5 text-base-content/70">{% for earlier in ai_history %}<li>{{ earlier }}</li>{% endfor %}</ol>
+    </div>
+    {% endif %}
+    <div class="flex flex-wrap items-center gap-3">
+      <button class="btn btn-primary" title="Send the question (Ctrl+Enter). The query screen opens filled in.">
+        <span class="loading loading-spinner loading-sm htmx-indicator"></span>✨ Draft query
+      </button>
+      <span class="text-xs text-base-content/60">Nothing is saved until you press Save on the query screen.</span>
+    </div>
+  </form>
+</section>

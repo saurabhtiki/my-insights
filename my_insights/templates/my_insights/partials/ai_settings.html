@@ -1,0 +1,55 @@
+<section id="ai-settings" class="card card-border bg-base-100 self-start" aria-labelledby="ai-settings-heading">
+  <div class="card-body gap-3 p-4">
+    <h2 id="ai-settings-heading" class="card-title text-base">1 · AI service</h2>
+    {% if done %}<div role="status" class="alert alert-soft alert-success py-2 text-sm">{{ done }}</div>{% endif %}
+    {% if problem %}<div role="alert" class="alert alert-soft alert-error py-2 text-sm">{{ problem }}</div>{% endif %}
+    {% if ai_settings and not problem %}
+    <div class="flex items-center gap-2 text-sm">
+      <span class="badge badge-success badge-soft" title="Questions go to this service and model">Connected</span>
+      <span class="truncate font-mono text-xs" title="Model @ service">{{ ai_settings.label }}</span>
+    </div>
+    {% endif %}
+    {% with shown=typed|default:ai_settings %}
+    <form class="space-y-3" method="post" action="{% url 'my_insights:ai_settings' %}"
+          hx-post="{% url 'my_insights:ai_settings' %}" hx-target="#ai-settings" hx-swap="outerHTML" hx-disabled-elt="find button">
+      {% csrf_token %}
+      <label class="form-control block">
+        <span class="label text-sm">Address</span>
+        <input name="address" type="url" required maxlength="500" value="{{ shown.address|default:'' }}"
+               class="input input-sm w-full font-mono" placeholder="https://api.openai.com/v1" autocomplete="off"
+               title="The service's OpenAI-style address, usually ending in /v1. Examples: https://api.openai.com/v1 · https://api.anthropic.com/v1 · https://openrouter.ai/api/v1 · http://localhost:11434/v1 (Ollama)">
+      </label>
+      <label class="form-control block">
+        <span class="label text-sm">API key
+          {% if ai_has_key %}<span class="badge badge-ghost badge-xs" title="A key is saved. Leave the box empty to keep it.">saved</span>{% endif %}
+        </span>
+        <input name="key" type="password" maxlength="500" class="input input-sm w-full font-mono" autocomplete="off"
+               placeholder="{% if ai_has_key %}•••••• (empty = keep the saved key){% else %}sk-…{% endif %}"
+               title="Your own key for this service. It stays in this session's memory only: never saved, logged or shown again. Local services like Ollama need none.">
+      </label>
+      <div class="form-control block">
+        <label for="ai-model" class="label text-sm">Model</label>
+        <div class="join w-full">
+          <input id="ai-model" name="model" list="ai-model-list" maxlength="200" value="{{ shown.model|default:'' }}" required
+                 class="input input-sm join-item w-full font-mono" placeholder="e.g. gpt-4o-mini" autocomplete="off"
+                 title="Pick from the list (click Load models first) or type the model's name">
+          <button type="button" class="btn btn-sm join-item" hx-post="{% url 'my_insights:ai_models' %}" hx-include="closest form"
+                  hx-target="#ai-model-box" hx-swap="innerHTML" hx-disabled-elt="this"
+                  title="Ask the service which models it offers, using the address and key above">
+            <span class="loading loading-spinner loading-xs htmx-indicator"></span>Load models
+          </button>
+        </div>
+        <div id="ai-model-box"><datalist id="ai-model-list"></datalist></div>
+      </div>
+      <div class="flex flex-wrap gap-2">
+        <button class="btn btn-sm btn-primary" title="Keep these for this session (memory only)">Save</button>
+        {% if ai_settings %}
+        <button type="button" class="btn btn-sm btn-ghost text-error" hx-post="{% url 'my_insights:ai_forget' %}"
+                hx-target="#ai-settings" hx-swap="outerHTML" title="Remove the address, key and model from memory now">Forget</button>
+        {% endif %}
+      </div>
+    </form>
+    {% endwith %}
+    <p class="text-xs text-base-content/60">The AI is sent dataset and column names and types, your notes and your question. Never a value or a row.</p>
+  </div>
+</section>

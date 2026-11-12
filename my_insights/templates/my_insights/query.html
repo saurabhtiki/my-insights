@@ -28,6 +28,8 @@
     {% include "my_insights/partials/top_bar.html" %}
   {% endwith %}
 
+  {% if ai_draft %}{% include "my_insights/partials/ai_followup.html" %}{% endif %}
+
   {% include "my_insights/partials/query_screen.html" %}
   {% include "my_insights/partials/idle_watch.html" %}
 </div>

@@ -4,7 +4,8 @@ small JSON with no data, so it can be saved and used again on new files.
     Nov: sales + items → link, "Margin by city" chart, "Monthly review" dashboard → Save recipe
     Dec: upload sales_dec.csv → Load recipe → match "sales" → sales_dec → Apply
 
-A recipe never holds rows, sample values, API addresses / headers or database details.
+A recipe never holds rows or sample values. For API / database datasets it remembers where
+they came from (see recipe_sources), so Apply can fetch them again.
 Applying is all or nothing: if a column the recipe uses is missing, nothing changes.
 """
 
@@ -19,9 +20,10 @@ import types
 import typing
 from datetime import date
 
-from . import charting, conf, linking, query_dataset, querying
+from . import charting, conf, linking, query_dataset, querying, recipe_sources
 from .dashboard import HEIGHTS, TILE_COLORS, TONES, WIDTHS, query_tiles, tile_source
 from .formula import FormulaError, compile_formula
+from .recipe_sources import FETCH, FetchFailed
 from .workspace import (
     CalculatedField,
     Dashboard,
@@ -55,8 +57,9 @@ class RecipeError(Exception):
 # ---------- saving ----------
 
 
-def to_recipe(workspace: Workspace, name: str) -> dict:
-    """The workspace's setup as plain JSON values. Holds no data."""
+def to_recipe(workspace: Workspace, name: str, keep_secrets: bool = True) -> dict:
+    """The workspace's setup as plain JSON values. Holds no data. API / database datasets
+    also hold where they came from; keep_secrets=False leaves keys and passwords empty."""
     with workspace.lock:
         ordered = _in_build_order(workspace)
         needs = _needed_columns(workspace, ordered)
@@ -87,6 +90,9 @@ def to_recipe(workspace: Workspace, name: str) -> dict:
                     "needs": sorted(needs.get(dataset.dataset_id, set())),
                     "required": dataset.dataset_id in required,
                 }
+                connection = recipe_sources.describe(workspace, dataset, keep_secrets)
+                if connection is not None:
+                    entry["connection"] = connection
             datasets.append(entry)
         return {
             MARKER: VERSION,
@@ -311,6 +317,11 @@ def _check(data: dict) -> dict:
                 _text(n, f"{where}.needs") for n in _list(entry.get("needs", []), f"{where}.needs")
             ]
             checked["required"] = bool(entry.get("required", True))
+            if entry.get("connection") is not None:
+                try:
+                    checked["connection"] = recipe_sources.checked(entry["connection"], where)
+                except ValueError as error:
+                    raise _Bad(str(error)) from error
         elif kind == "combined":
             link = _build(LinkSpec, entry.get("link"), f"{where}.link")
             for step in link.steps:
@@ -331,6 +342,11 @@ def _check(data: dict) -> dict:
             raise _Bad(f"{where}.id {dataset_id} is used twice.")
         ids.add(dataset_id)
         datasets.append(checked)
+    apis = {c["id"] for c in datasets if c.get("connection", {}).get("type") == "api"}
+    for checked in datasets:
+        connection = checked.get("connection", {})
+        if connection.get("type") == "api_child" and connection["parent"] not in apis:
+            raise _Bad(f"“{checked['name']}” comes with a list that is not in the recipe.")
 
     queries = {}
     for at, entry in enumerate(_list(data.get("queries", []), "queries")):
@@ -556,6 +572,9 @@ def guess_matches(recipe: dict, workspace: Workspace) -> dict[int, int | None]:
         lambda entry, d: d.name.casefold() == entry["name"].casefold(),
         lambda entry, d: _plain(d.name) == _plain(entry["name"]),
     ]
+    for entry in sources(recipe):  # fetched again from where it came from, when possible
+        if _can_fetch(entry, recipe):
+            matches[entry["id"]] = FETCH
     for test in tests:
         for entry in sources(recipe):
             if matches[entry["id"]] is None:
@@ -582,6 +601,22 @@ def guess_matches(recipe: dict, workspace: Workspace) -> dict[int, int | None]:
     return matches
 
 
+def _can_fetch(entry: dict, recipe: dict) -> bool:
+    connection = entry.get("connection")
+    if connection is None or recipe_sources.switched_off(connection):
+        return False
+    if connection["type"] == "api_child":
+        parent = next((e for e in sources(recipe) if e["id"] == connection["parent"]), None)
+        return parent is not None and _can_fetch(parent, recipe)
+    return True
+
+
+def parent_pick(entry: dict, matches: dict):
+    """What a JSON child list's parent is matched to (None if it is not a child list)."""
+    connection = entry.get("connection") or {}
+    return matches.get(connection["parent"]) if connection.get("type") == "api_child" else None
+
+
 def _likeness(entry: dict, dataset) -> float:
     """0..1: how alike the names are, or the column lists, whichever is higher."""
     names = difflib.SequenceMatcher(None, _plain(entry["name"]), _plain(dataset.name)).ratio()
@@ -590,10 +625,18 @@ def _likeness(entry: dict, dataset) -> float:
     return max(names, columns)
 
 
-def match_problems(recipe: dict, workspace: Workspace, matches: dict) -> dict[int, str]:
-    """{recipe dataset id: why it can't be used yet}. Empty = ready to apply."""
+def match_problems(
+    recipe: dict, workspace: Workspace, matches: dict, typed: dict | None = None
+) -> dict[int, str]:
+    """{recipe dataset id: why it can't be used yet}. Empty = ready to apply. A row set to
+    "fetch again" is checked for what can be checked before fetching (secrets typed…)."""
     problems, picked = {}, {}
     for entry in sources(recipe):
+        if matches.get(entry["id"]) == FETCH:
+            problem = recipe_sources.fetch_problem(entry, parent_pick(entry, matches), typed or {})
+            if problem:
+                problems[entry["id"]] = problem
+            continue
         dataset = workspace.datasets.get(matches.get(entry["id"]) or 0)
         loaded = {d.dataset_id for d in candidates(workspace)}
         if dataset is None or dataset.dataset_id not in loaded:
@@ -632,15 +675,36 @@ def _kind_changes(entry: dict, dataset) -> list[str]:
 # ---------- applying ----------
 
 
-def apply_recipe(workspace: Workspace, recipe: dict, matches: dict) -> list[str]:
-    """Replace the workspace's setup with the recipe's, on the matched datasets. All or
-    nothing: raises RecipeError and leaves everything as it was. Returns report lines."""
+def apply_recipe(
+    workspace: Workspace, recipe: dict, matches: dict, typed: dict | None = None
+) -> list[str]:
+    """Replace the workspace's setup with the recipe's, on the matched datasets. Rows set to
+    "fetch again" are fetched first (typed: {API / server group: {secret key: value}}),
+    without holding the lock while waiting for the network. All or nothing: raises
+    RecipeError and leaves everything as it was. Returns report lines."""
+    fetching = [e for e in sources(recipe) if matches.get(e["id"]) == FETCH]
     with workspace.lock:
-        problems = match_problems(recipe, workspace, matches)
+        problems = match_problems(recipe, workspace, matches, typed)
         if problems:
             _refuse(" ".join(problems.values()))
-        built = _Built(workspace)
+    fetched_ids: list[int] = []
+    if fetching:
         try:
+            found, fetched_ids = recipe_sources.fetch_again(workspace, fetching, typed or {})
+        except FetchFailed as error:
+            _refuse(f"{error} Nothing was changed.")
+        matches = matches | found
+    with workspace.lock:
+        built = _Built(workspace)
+        built.fetched = fetched_ids
+        try:
+            if fetching:
+                problems = match_problems(recipe, workspace, matches)
+                if problems:
+                    _refuse(
+                        "Fetched again, but the data does not fit the recipe, so nothing was "
+                        "changed. " + " ".join(problems.values())
+                    )
             _build_all(workspace, recipe, matches, built)
             _check_built(workspace, built)
         except RecipeError:
@@ -662,6 +726,9 @@ def apply_recipe(workspace: Workspace, recipe: dict, matches: dict) -> list[str]
         ]
     )
     lines = [f"Applied the recipe “{recipe['name']}”: {made}."]
+    fetched = [e["name"] for e in fetching if matches.get(e["id"])]
+    if fetched:
+        lines.append(f"Fetched again: {', '.join(fetched)}.")
     skipped = [e["name"] for e in sources(recipe) if not matches.get(e["id"])]
     if skipped:
         lines.append(f"Not matched (nothing used them): {', '.join(skipped)}.")
@@ -686,6 +753,7 @@ class _Built:
         self.old_dashboards = list(workspace.dashboards)
         self.old_calculated = {d.dataset_id: d.calculated for d in workspace.datasets.values()}
         self.datasets: dict[int, str] = {}  # new id → the name it should end with
+        self.fetched: list[int] = []  # API / database datasets fetched again
         self.sources: list[int] = []  # matched datasets that got the recipe's calculated fields
         self.queries: list[int] = []
         self.charts: list[int] = []
@@ -705,6 +773,9 @@ class _Built:
         for dataset_id, calculated in self.old_calculated.items():
             if dataset_id in workspace.datasets:
                 workspace.datasets[dataset_id].calculated = calculated
+        for dataset_id in reversed(self.fetched):
+            if dataset_id in workspace.datasets:
+                workspace.remove_dataset(dataset_id)
         workspace.refresh_memory()
 
     def keep(self) -> None:

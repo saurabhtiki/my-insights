@@ -5,6 +5,7 @@ server (localhost, 10.x, 192.168.x, 169.254.x …) is refused, also after a redi
 the host lists it in API_ALLOWED_HOSTS. Python's own urllib is used: no extra package.
 """
 
+import http.client
 import ipaddress
 import json
 import logging
@@ -158,6 +159,9 @@ def fetch_json(source: ApiSource) -> bytes:
             raise ApiFailed(f"The API took longer than {timeout} seconds to reply.") from error
         logger.info("API not reachable: %s (%s)", safe_url(source.url), error.reason)
         raise ApiFailed(f"Could not reach the API ({error.reason}).") from error
+    except (OSError, http.client.HTTPException) as error:  # e.g. the connection dropped
+        logger.info("API connection failed: %s (%r)", safe_url(source.url), error)
+        raise ApiFailed("The API closed the connection without answering. Try again.") from error
     data = b"".join(chunks)
     if not data.strip():
         raise ApiFailed("The API sent an empty reply.")

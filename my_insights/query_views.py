@@ -19,6 +19,7 @@ from django.views.decorators.http import require_GET, require_http_methods, requ
 from django_datatable import CHOICE, DATE, NUMBER, TEXT, YES_NO, Column, RowsTable, table_response
 
 from . import chart_views, charting, query_dataset, querying
+from .ai_assist import MAX_QUESTION
 from .formula import AGGREGATES, FORMULA_KIND, FUNCTIONS
 from .query_dataset import QueryDatasetFailed
 from .querying import (
@@ -113,6 +114,7 @@ def query(request):
         chart_problem = ""
         notice = ""
         params = request.POST if request.method == "POST" else request.GET
+        ai_draft = None  # an AI answer opened here (?ai=<key>), shown with a follow-up box
         tab = "chart" if params.get("tab") == "chart" else "table"
         chart_id = _number(params.get("chart_id") or params.get("chart")) or None
         chart_name = " ".join(params.get("chart_name", "").split())
@@ -143,6 +145,11 @@ def query(request):
         else:
             spec, name, query_id = _start_spec(request.GET, workspace)
             chart = None
+            ai_draft = workspace.ai_drafts.get(request.GET.get("ai", ""))
+            if ai_draft is not None and ai_draft.spec.dataset_id in workspace.datasets:
+                spec, name, query_id = copy.deepcopy(ai_draft.spec), "", None
+            else:
+                ai_draft = None
             opened = workspace.charts.get(chart_id) if chart_id else None
             if opened is not None and workspace.chart_query(opened) is not None:
                 chart_spec = workspace.chart_query(opened)
@@ -186,6 +193,8 @@ def query(request):
             chart_rows = result.long_rows if result is not None else []
         if chart is None:  # the Chart tab not used yet: pick fields from the query
             chart = charting.default_chart(chart_spec, chart_plan)
+            if ai_draft is not None and ai_draft.chart_type:
+                chart.chart_type = ai_draft.chart_type
         built = None
         if result is not None and (tab == "chart" or action == "save_chart"):
             built = charting.build_chart(chart, chart_spec, chart_plan, chart_rows)
@@ -290,7 +299,9 @@ def query(request):
             tab=tab,
             # Until a chart setting is changed (or the chart saved), it keeps following the
             # query: e.g. a 2nd Group by field becomes the colours.
-            chart_touched=request.POST.get("chart_touched") == "1" or chart_id in workspace.charts,
+            chart_touched=request.POST.get("chart_touched") == "1"
+            or chart_id in workspace.charts
+            or bool(ai_draft and ai_draft.chart_type),  # keep the AI's chart type
             chart_problem=chart_problem,
             suggested_chart=suggested_chart,
             draft_id=draft_id,
@@ -303,6 +314,8 @@ def query(request):
             problem_notice=_take_notice(workspace),
             dirty=dirty,
             formula=formula,
+            ai_draft=ai_draft,
+            max_question=MAX_QUESTION,
         )
     if is_htmx:
         return render(request, "my_insights/partials/query_screen.html", context)

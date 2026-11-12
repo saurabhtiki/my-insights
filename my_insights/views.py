@@ -123,6 +123,7 @@ def page_context(request, workspace, expired: bool, **extra) -> dict:
         "allow_api": conf.get("ALLOW_API_IMPORT"),
         "allow_db": conf.get("ALLOW_DB_IMPORT"),
         "allow_db_connect": conf.get("ALLOW_DB_CONNECT"),
+        "allow_ai": conf.get("ALLOW_AI"),
         "pending_databases": list(workspace.pending_databases.values()) if workspace else [],
         "pending_recipe": workspace.pending_recipe if workspace else None,
         "can_save_recipe": bool(workspace and _has_setup(workspace)),
