@@ -37,9 +37,23 @@
           <tr>
             <td class="align-top">
               <div class="font-medium">{{ row.entry.name }}</div>
-              <div class="text-xs text-base-content/60" title="{{ row.entry.needs|join:', ' }}">
-                {% if row.entry.needs %}needs {{ row.entry.needs|length }} column{{ row.entry.needs|length|pluralize }}{% elif row.entry.required %}needs no particular column{% else %}not used by anything{% endif %}
+              {% if row.columns %}
+              <details class="text-xs text-base-content/70">
+                <summary class="cursor-pointer select-none" title="Show the columns your file must have. Extra columns are fine: they are ignored">
+                  needs {{ row.columns|length }} column{{ row.columns|length|pluralize }}
+                </summary>
+                <ul class="mt-1 ml-4 list-disc">
+                  {% for name, kind in row.columns %}<li><span class="font-medium">{{ name }}</span> <span class="text-base-content/50">({{ kind }})</span></li>{% endfor %}
+                </ul>
+                <p class="mt-1 text-base-content/50">Extra columns in your file are fine.</p>
+              </details>
+              <a href="{% url 'my_insights:recipe_template' %}?id={{ row.entry.id }}" class="link link-primary text-xs" download
+                 title="Download an empty CSV with just these column headings: fill it in (or paste your data) and upload it">⬇ Template (CSV)</a>
+              {% else %}
+              <div class="text-xs text-base-content/60">
+                {% if row.entry.required %}needs no particular column{% else %}not used by anything{% endif %}
               </div>
+              {% endif %}
             </td>
             <td class="align-top">
               <select name="match_{{ row.entry.id }}" class="select select-sm w-full max-w-xs" aria-label="Dataset for {{ row.entry.name }}"

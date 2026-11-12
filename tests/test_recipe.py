@@ -504,3 +504,24 @@ def test_odd_picks_and_a_stale_tab_are_handled(client, setup):
     assert odd.status_code == 200 and "Pick a dataset" in odd.content.decode()
     stale = client.post(reverse("my_insights:recipe_match"), {"action": "apply", "token": "old"})
     assert "Another recipe was loaded" in stale.content.decode() and not workspace.queries
+
+
+@pytest.mark.django_db
+def test_the_match_screen_lists_needed_columns_and_gives_a_template(client, setup):
+    workspace, _ = upload(client, "sales_dec.csv", SALES_DEC)
+    workspace.pending_recipe = saved(setup)
+    page = client.get(reverse("my_insights:recipe_match")).content.decode()
+    assert 'Cost</span> <span class="text-base-content/50">(a whole number)' in page
+    assert "Extra columns in your file are fine." in page
+    sales = next(e for e in workspace.pending_recipe["datasets"] if e["name"] == "sales")
+    response = client.get(reverse("my_insights:recipe_template"), {"id": sales["id"]})
+    body = b"".join(response.streaming_content).decode("utf-8-sig")
+    # In the file's own order; Date is not used by anything, so it is left out.
+    assert body.strip() == "Branch,Item,Amount,Cost,Qty"
+    assert "sales template.csv" in response["Content-Disposition"]
+    sales["needs"] = ["=1+2"]  # a crafted recipe can't make Excel run a formula
+    response = client.get(reverse("my_insights:recipe_template"), {"id": sales["id"]})
+    assert b"".join(response.streaming_content).decode("utf-8-sig").strip() == "'=1+2"
+    assert client.get(reverse("my_insights:recipe_template"), {"id": "99"}).status_code == 404
+    workspace.pending_recipe = None
+    assert client.get(reverse("my_insights:recipe_template"), {"id": "1"}).status_code == 302

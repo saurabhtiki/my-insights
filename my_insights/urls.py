@@ -26,6 +26,7 @@ urlpatterns = [
     path("recipe/upload/", recipe_views.recipe_upload, name="recipe_upload"),
     path("recipe/load/", recipe_views.recipe_load, name="recipe_load"),
     path("recipe/match/", recipe_views.recipe_match, name="recipe_match"),
+    path("recipe/template/", recipe_views.recipe_template, name="recipe_template"),
     path("recipe/cancel/", recipe_views.recipe_cancel, name="recipe_cancel"),
     path("api/test/", api_views.api_test, name="api_test"),
     path("api/import/", api_views.api_import, name="api_import"),

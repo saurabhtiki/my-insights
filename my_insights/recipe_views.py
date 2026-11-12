@@ -10,8 +10,11 @@ from django.urls import reverse
 from django.utils.module_loading import import_string
 from django.views.decorators.csrf import csrf_exempt, csrf_protect
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
+from django_datatable import formula_safe, rows_csv_response
 
 from . import conf
+from .exporting import attachment
+from .exporting import file_name as export_file_name
 from .recipe import (
     NAME_LENGTH,
     RecipeError,
@@ -20,6 +23,7 @@ from .recipe import (
     file_name,
     guess_matches,
     match_problems,
+    needed_columns,
     read_recipe,
     sources,
     to_recipe,
@@ -197,6 +201,7 @@ def _match_context(request, workspace, recipe, matches, refused: str = "") -> di
             "entry": entry,
             "picked": matches.get(entry["id"]),
             "problem": problems.get(entry["id"], ""),
+            "columns": needed_columns(entry),
         }
         for entry in sources(recipe)
     ]
@@ -216,6 +221,24 @@ def _match_context(request, workspace, recipe, matches, refused: str = "") -> di
         dashboard_names=[d.name for d in recipe["dashboards"]],
         has_work=bool(workspace.queries or workspace.charts or workspace.dashboards),
     )
+
+
+@require_GET
+def recipe_template(request):
+    """An empty CSV with the columns one recipe dataset needs, e.g. ?id=1 →
+    sales_template.csv holding "Date,Branch,Amount": fill it in and upload it."""
+    workspace, _ = current_workspace(request)
+    recipe = workspace.pending_recipe if workspace is not None else None
+    if recipe is None:
+        return redirect("my_insights:home")
+    entry_id = request.GET.get("id", "")
+    entry = next((e for e in sources(recipe) if str(e["id"]) == entry_id), None)
+    if entry is None:
+        logger.info("Template asked for an unknown recipe dataset %r", entry_id[:20])
+        raise Http404("That recipe dataset was not found.")
+    headings = [formula_safe(name) for name, _ in needed_columns(entry)]
+    response = rows_csv_response("template.csv", headings, [])
+    return attachment(response, export_file_name(f"{entry['name']} template", "csv"))
 
 
 @require_POST

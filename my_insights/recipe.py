@@ -530,6 +530,15 @@ def sources(recipe: dict) -> list[dict]:
     return [entry for entry in recipe["datasets"] if entry["kind"] == "source"]
 
 
+def needed_columns(entry: dict) -> list[tuple[str, str]]:
+    """The columns a file must have for this recipe dataset, in the file's own order, with
+    their type in words: [("Date", "a date"), ("Amount", "a whole number")]. Others are ignored."""
+    order = {name: place for place, name in enumerate(entry["columns"])}
+    names = sorted(entry["needs"], key=lambda name: order.get(name, len(order)))
+    kinds = entry["kinds"]
+    return [(name, querying.KIND_WORDS.get(kinds.get(name, ""), "any type")) for name in names]
+
+
 def _plain(name: str) -> str:
     """ "Sales (2)" / "sales.csv" → "sales" """
     name = re.sub(r"\s*\(\d+\)$", "", name.casefold())

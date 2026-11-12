@@ -1,6 +1,7 @@
 # Plan: Phase 9a, Recipes: save and reuse your setup (my-insights)
 
-**Status: done.** 442 tests pass (30 new in `tests/test_recipe.py`). (Phase 8c plan: `plan_phase8c.md`.)
+**Status: done.** 443 tests pass (31 new in `tests/test_recipe.py`). (Phase 8c plan: `plan_phase8c.md`.)
+Added after: the match screen lists each recipe dataset's needed columns with their type, and offers an empty CSV template with those headings (`recipe/template/?id=`). Extra columns in a file are ignored.
 
 Built as agreed, with these changes:
 - **"Needs" are worked out when saving**: each file dataset in the recipe lists the columns
